@@ -23,10 +23,20 @@
 #include <linux/slab.h>
 #include <linux/uuid.h>
 #include <linux/mei_cl_bus.h>
+#include <linux/component.h>
 #include <drm/drm_connector.h>
 #include <drm/i915_component.h>
 
 #include "mei_hdcp.h"
+
+struct i915_component_master *i915_master_comp;
+static bool mei_hdcp_component_registered;
+
+/*
+ * Mutex to protect the component addition, deletion, master_comp update
+ * and usage.
+ */
+struct mutex mei_comp_mutex;
 
 /**
  * mei_initiate_hdcp2_session() - Initiate a Wired HDCP2.2 Tx Session in ME FW
@@ -49,6 +59,12 @@ mei_initiate_hdcp2_session(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !ake_data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	session_init_in.header.api_version = HDCP_API_VERSION;
@@ -65,6 +81,7 @@ mei_initiate_hdcp2_session(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(session_init_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -72,6 +89,7 @@ mei_initiate_hdcp2_session(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(session_init_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -79,12 +97,14 @@ mei_initiate_hdcp2_session(struct device *dev, struct hdcp_port_data *data,
 		dev_dbg(dev, "ME cmd 0x%08X Failed. Status: 0x%X\n",
 			WIRED_INITIATE_HDCP2_SESSION,
 			session_init_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
 
 	ake_data->msg_id = HDCP_2_2_AKE_INIT;
 	ake_data->tx_caps = session_init_out.tx_caps;
 	memcpy(ake_data->r_tx, session_init_out.r_tx, HDCP_2_2_RTX_LEN);
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -117,6 +137,12 @@ mei_verify_receiver_cert_prepare_km(struct device *dev,
 	if (!dev || !data || !rx_cert || !km_stored || !ek_pub_km || !msg_sz)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	verify_rxcert_in.header.api_version = HDCP_API_VERSION;
@@ -136,6 +162,7 @@ mei_verify_receiver_cert_prepare_km(struct device *dev,
 			      sizeof(verify_rxcert_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed: %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -143,6 +170,7 @@ mei_verify_receiver_cert_prepare_km(struct device *dev,
 			      sizeof(verify_rxcert_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed: %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -150,6 +178,7 @@ mei_verify_receiver_cert_prepare_km(struct device *dev,
 		dev_dbg(dev, "ME cmd 0x%08X Failed. Status: 0x%X\n",
 			WIRED_VERIFY_RECEIVER_CERT,
 			verify_rxcert_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
 
@@ -164,6 +193,7 @@ mei_verify_receiver_cert_prepare_km(struct device *dev,
 
 	memcpy(ek_pub_km->e_kpub_km, &verify_rxcert_out.ekm_buff,
 	       sizeof(verify_rxcert_out.ekm_buff));
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -187,6 +217,12 @@ static int mei_verify_hprime(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !rx_hprime)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	send_hprime_in.header.api_version = HDCP_API_VERSION;
@@ -204,6 +240,7 @@ static int mei_verify_hprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(send_hprime_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -211,14 +248,17 @@ static int mei_verify_hprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(send_hprime_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	if (send_hprime_out.header.status != ME_HDCP_STATUS_SUCCESS) {
 		dev_dbg(dev, "ME cmd 0x%08X Failed. Status: 0x%X\n",
 			WIRED_AKE_SEND_HPRIME, send_hprime_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -243,6 +283,12 @@ mei_store_pairing_info(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !pairing_info)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	pairing_info_in.header.api_version = HDCP_API_VERSION;
@@ -261,6 +307,7 @@ mei_store_pairing_info(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(pairing_info_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -268,6 +315,7 @@ mei_store_pairing_info(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(pairing_info_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -275,8 +323,10 @@ mei_store_pairing_info(struct device *dev, struct hdcp_port_data *data,
 		dev_dbg(dev, "ME cmd 0x%08X failed. Status: 0x%X\n",
 			WIRED_AKE_SEND_PAIRING_INFO,
 			pairing_info_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -301,6 +351,12 @@ mei_initiate_locality_check(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !lc_init_data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	lc_init_in.header.api_version = HDCP_API_VERSION;
@@ -314,23 +370,27 @@ mei_initiate_locality_check(struct device *dev, struct hdcp_port_data *data,
 	byte = mei_cldev_send(cldev, (u8 *)&lc_init_in, sizeof(lc_init_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	byte = mei_cldev_recv(cldev, (u8 *)&lc_init_out, sizeof(lc_init_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	if (lc_init_out.header.status != ME_HDCP_STATUS_SUCCESS) {
 		dev_dbg(dev, "ME cmd 0x%08X Failed. status: 0x%X\n",
 			WIRED_INIT_LOCALITY_CHECK, lc_init_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
 
 	lc_init_data->msg_id = HDCP_2_2_LC_INIT;
 	memcpy(lc_init_data->r_n, lc_init_out.r_n, HDCP_2_2_RN_LEN);
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -354,6 +414,12 @@ static int mei_verify_lprime(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !rx_lprime)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	verify_lprime_in.header.api_version = HDCP_API_VERSION;
@@ -372,6 +438,7 @@ static int mei_verify_lprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(verify_lprime_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -379,6 +446,7 @@ static int mei_verify_lprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(verify_lprime_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -386,8 +454,10 @@ static int mei_verify_lprime(struct device *dev, struct hdcp_port_data *data,
 		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
 			WIRED_VALIDATE_LOCALITY,
 			verify_lprime_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -411,6 +481,12 @@ static int mei_get_session_key(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !data || !ske_data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	get_skey_in.header.api_version = HDCP_API_VERSION;
@@ -424,6 +500,7 @@ static int mei_get_session_key(struct device *dev, struct hdcp_port_data *data,
 	byte = mei_cldev_send(cldev, (u8 *)&get_skey_in, sizeof(get_skey_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -431,12 +508,14 @@ static int mei_get_session_key(struct device *dev, struct hdcp_port_data *data,
 
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	if (get_skey_out.header.status != ME_HDCP_STATUS_SUCCESS) {
 		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
 			WIRED_GET_SESSION_KEY, get_skey_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
 
@@ -444,6 +523,7 @@ static int mei_get_session_key(struct device *dev, struct hdcp_port_data *data,
 	memcpy(ske_data->e_dkey_ks, get_skey_out.e_dkey_ks,
 	       HDCP_2_2_E_DKEY_KS_LEN);
 	memcpy(ske_data->riv, get_skey_out.r_iv, HDCP_2_2_RIV_LEN);
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -473,6 +553,12 @@ mei_repeater_check_flow_prepare_ack(struct device *dev,
 	if (!dev || !rep_topology || !rep_send_ack || !data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	verify_repeater_in.header.api_version = HDCP_API_VERSION;
@@ -498,6 +584,7 @@ mei_repeater_check_flow_prepare_ack(struct device *dev,
 			      sizeof(verify_repeater_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -505,6 +592,7 @@ mei_repeater_check_flow_prepare_ack(struct device *dev,
 			      sizeof(verify_repeater_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -512,12 +600,14 @@ mei_repeater_check_flow_prepare_ack(struct device *dev,
 		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
 			WIRED_VERIFY_REPEATER,
 			verify_repeater_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
 
 	memcpy(rep_send_ack->v, verify_repeater_out.v,
 	       HDCP_2_2_V_PRIME_HALF_LEN);
 	rep_send_ack->msg_id = HDCP_2_2_REP_SEND_ACK;
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -543,6 +633,12 @@ static int mei_verify_mprime(struct device *dev, struct hdcp_port_data *data,
 	if (!dev || !stream_ready || !data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	verify_mprime_in.header.api_version = HDCP_API_VERSION;
@@ -566,6 +662,7 @@ static int mei_verify_mprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(verify_mprime_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -573,6 +670,7 @@ static int mei_verify_mprime(struct device *dev, struct hdcp_port_data *data,
 			      sizeof(verify_mprime_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -580,8 +678,10 @@ static int mei_verify_mprime(struct device *dev, struct hdcp_port_data *data,
 		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
 			WIRED_REPEATER_AUTH_STREAM_REQ,
 			verify_mprime_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -604,6 +704,12 @@ mei_enable_hdcp_authentication(struct device *dev, struct hdcp_port_data *data)
 	if (!dev || !data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	enable_auth_in.header.api_version = HDCP_API_VERSION;
@@ -619,6 +725,7 @@ mei_enable_hdcp_authentication(struct device *dev, struct hdcp_port_data *data)
 			      sizeof(enable_auth_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -626,14 +733,17 @@ mei_enable_hdcp_authentication(struct device *dev, struct hdcp_port_data *data)
 			      sizeof(enable_auth_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	if (enable_auth_out.header.status != ME_HDCP_STATUS_SUCCESS) {
 		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
 			WIRED_ENABLE_AUTH, enable_auth_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
@@ -657,6 +767,12 @@ mei_close_hdcp_session(struct device *dev, struct hdcp_port_data *data)
 	if (!dev || !data)
 		return -EINVAL;
 
+	mutex_lock(&mei_comp_mutex);
+	if (!i915_master_comp->mei_dev) {
+		mutex_unlock(&mei_comp_mutex);
+		return -ENODEV;
+	}
+
 	cldev = to_mei_cl_device(dev);
 
 	session_close_in.header.api_version = HDCP_API_VERSION;
@@ -672,6 +788,7 @@ mei_close_hdcp_session(struct device *dev, struct hdcp_port_data *data)
 			      sizeof(session_close_in));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
@@ -679,20 +796,22 @@ mei_close_hdcp_session(struct device *dev, struct hdcp_port_data *data)
 			      sizeof(session_close_out));
 	if (byte < 0) {
 		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		mutex_unlock(&mei_comp_mutex);
 		return byte;
 	}
 
 	if (session_close_out.header.status != ME_HDCP_STATUS_SUCCESS) {
 		dev_dbg(dev, "Session Close Failed. status: 0x%X\n",
 			session_close_out.header.status);
+		mutex_unlock(&mei_comp_mutex);
 		return -EIO;
 	}
+	mutex_unlock(&mei_comp_mutex);
 
 	return 0;
 }
 
-static __attribute__((unused))
-struct i915_hdcp_component_ops mei_hdcp_ops = {
+static struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.owner = THIS_MODULE,
 	.initiate_hdcp2_session = mei_initiate_hdcp2_session,
 	.verify_receiver_cert_prepare_km = mei_verify_receiver_cert_prepare_km,
@@ -707,20 +826,89 @@ struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.close_hdcp_session = mei_close_hdcp_session,
 };
 
+static int mei_hdcp_component_bind(struct device *mei_kdev,
+				   struct device *i915_kdev, void *data)
+{
+	struct i915_component_master *master_comp = data;
+
+	dev_info(mei_kdev, "MEI HDCP comp bind\n");
+	WARN_ON(master_comp->hdcp_ops);
+	master_comp->hdcp_ops = &mei_hdcp_ops;
+	master_comp->mei_dev = mei_kdev;
+
+	i915_master_comp = master_comp;
+
+	return 0;
+}
+
+static void mei_hdcp_component_unbind(struct device *mei_kdev,
+				      struct device *i915_kdev, void *data)
+{
+	struct i915_component_master *master_comp = data;
+
+	dev_info(mei_kdev, "MEI HDCP comp unbind\n");
+	master_comp->hdcp_ops = NULL;
+	master_comp->mei_dev = NULL;
+	i915_master_comp = NULL;
+}
+
+static const struct component_ops mei_hdcp_component_bind_ops = {
+	.bind	= mei_hdcp_component_bind,
+	.unbind	= mei_hdcp_component_unbind,
+};
+
+static void mei_hdcp_component_init(struct device *dev)
+{
+	int ret;
+
+	mutex_lock(&mei_comp_mutex);
+	if (mei_hdcp_component_registered && i915_master_comp) {
+		i915_master_comp->mei_dev = dev;
+		mutex_unlock(&mei_comp_mutex);
+		return;
+	}
+
+	dev_info(dev, "MEI HDCP comp init\n");
+	ret = component_add(dev, &mei_hdcp_component_bind_ops);
+	if (ret < 0) {
+		dev_err(dev, "Failed to add MEI HDCP comp (%d)\n", ret);
+		mutex_unlock(&mei_comp_mutex);
+		return;
+	}
+
+	mei_hdcp_component_registered = true;
+	mutex_unlock(&mei_comp_mutex);
+}
+
+static void mei_hdcp_component_cleanup(struct device *dev)
+{
+	dev_info(dev, "MEI HDCP comp cleanup\n");
+	component_del(dev, &mei_hdcp_component_bind_ops);
+	mei_hdcp_component_registered = false;
+}
+
 static int mei_hdcp_probe(struct mei_cl_device *cldev,
 			  const struct mei_cl_device_id *id)
 {
 	int ret;
 
 	ret = mei_cldev_enable(cldev);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&cldev->dev, "mei_cldev_enable Failed. %d\n", ret);
+		return ret;
+	}
+	mei_hdcp_component_init(&cldev->dev);
 
-	return ret;
+	return 0;
 }
 
 static int mei_hdcp_remove(struct mei_cl_device *cldev)
 {
+	mutex_lock(&mei_comp_mutex);
+	if (i915_master_comp)
+		i915_master_comp->mei_dev = NULL;
+	mutex_unlock(&mei_comp_mutex);
+
 	return mei_cldev_disable(cldev);
 }
 
@@ -741,7 +929,25 @@ static struct mei_cl_driver mei_hdcp_driver = {
 	.remove		= mei_hdcp_remove,
 };
 
-module_mei_cl_driver(mei_hdcp_driver);
+static int __init mei_hdcp_init(void)
+{
+	mutex_init(&mei_comp_mutex);
+	return mei_cldev_driver_register(&mei_hdcp_driver);
+}
+
+static void __exit mei_hdcp_exit(void)
+{
+	mutex_lock(&mei_comp_mutex);
+	if (mei_hdcp_component_registered)
+		mei_hdcp_component_cleanup(i915_master_comp->mei_dev);
+	mutex_unlock(&mei_comp_mutex);
+
+	mei_cldev_driver_unregister(&mei_hdcp_driver);
+	mutex_destroy(&mei_comp_mutex);
+}
+
+module_init(mei_hdcp_init);
+module_exit(mei_hdcp_exit);
 
 MODULE_AUTHOR("Intel Corporation");
 MODULE_LICENSE("Dual BSD/GPL");
