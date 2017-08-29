@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/uuid.h>
 #include <linux/mei_cl_bus.h>
+#include <linux/component.h>
 #include <drm/drm_connector.h>
 #include <drm/i915_component.h>
 #include <drm/i915_mei_hdcp_interface.h>
@@ -692,8 +693,7 @@ mei_close_hdcp_session(struct device *dev, struct hdcp_port_data *data)
 	return 0;
 }
 
-static __attribute__((unused))
-struct i915_hdcp_component_ops mei_hdcp_ops = {
+static struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.owner = THIS_MODULE,
 	.initiate_hdcp2_session = mei_initiate_hdcp2_session,
 	.verify_receiver_cert_prepare_km = mei_verify_receiver_cert_prepare_km,
@@ -708,20 +708,106 @@ struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.close_hdcp_session = mei_close_hdcp_session,
 };
 
+static int mei_component_master_bind(struct device *dev)
+{
+	struct mei_cl_device *cldev = to_mei_cl_device(dev);
+	struct mei_hdcp_drv_data *drv_data = mei_cldev_get_drvdata(cldev);
+	int ret;
+
+	dev_info(dev, "%s\n", __func__);
+	drv_data->comp_master->ops = &mei_hdcp_ops;
+	drv_data->comp_master->mei_dev = dev;
+	ret = component_bind_all(dev, drv_data->comp_master);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static void mei_component_master_unbind(struct device *dev)
+{
+	struct mei_cl_device *cldev = to_mei_cl_device(dev);
+	struct mei_hdcp_drv_data *drv_data = mei_cldev_get_drvdata(cldev);
+
+	dev_info(dev, "%s\n", __func__);
+	component_unbind_all(dev, drv_data->comp_master);
+}
+
+static const struct component_master_ops mei_component_master_ops = {
+	.bind = mei_component_master_bind,
+	.unbind = mei_component_master_unbind,
+};
+
+static int mei_hdcp_component_match(struct device *dev, int subcomponent,
+				    void *data)
+{
+	return !strcmp(dev->driver->name, "i915") &&
+	       subcomponent == I915_COMPONENT_HDCP;
+}
+
 static int mei_hdcp_probe(struct mei_cl_device *cldev,
 			  const struct mei_cl_device_id *id)
 {
+	struct mei_hdcp_drv_data *drv_data;
 	int ret;
 
 	ret = mei_cldev_enable(cldev);
 	if (ret < 0)
 		dev_err(&cldev->dev, "mei_cldev_enable Failed. %d\n", ret);
 
+	drv_data = kzalloc(sizeof(*drv_data), GFP_KERNEL);
+	if (!drv_data) {
+		ret = -ENOMEM;
+		goto drv_data_exit;
+	}
+
+	drv_data->comp_master = kzalloc(sizeof(*drv_data->comp_master),
+					GFP_KERNEL);
+	if (!drv_data->comp_master) {
+		ret = -ENOMEM;
+		goto comp_master_exit;
+	}
+
+	drv_data->master_match = NULL;
+	component_match_add_typed(&cldev->dev, &drv_data->master_match,
+				  mei_hdcp_component_match,
+				  drv_data->comp_master);
+	if (IS_ERR_OR_NULL(drv_data->master_match)) {
+		ret = -ENOMEM;
+		goto match_add_exit;
+	}
+
+	mei_cldev_set_drvdata(cldev, drv_data);
+	ret = component_master_add_with_match(&cldev->dev,
+					      &mei_component_master_ops,
+					      drv_data->master_match);
+	if (ret < 0) {
+		dev_err(&cldev->dev, "Master comp add failed %d\n", ret);
+		mei_cldev_set_drvdata(cldev, NULL);
+		goto match_add_exit;
+	}
+
+	return 0;
+
+match_add_exit:
+	kfree(drv_data->comp_master);
+comp_master_exit:
+	kfree(drv_data);
+drv_data_exit:
+	mei_cldev_disable(cldev);
+
 	return ret;
 }
 
 static int mei_hdcp_remove(struct mei_cl_device *cldev)
 {
+	struct mei_hdcp_drv_data *drv_data = mei_cldev_get_drvdata(cldev);
+
+	component_master_del(&cldev->dev, &mei_component_master_ops);
+	kfree(drv_data->comp_master);
+	kfree(drv_data);
+	mei_cldev_set_drvdata(cldev, NULL);
+
 	return mei_cldev_disable(cldev);
 }
 
