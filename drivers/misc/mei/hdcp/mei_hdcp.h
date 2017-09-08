@@ -363,4 +363,27 @@ struct wired_cmd_repeater_auth_stream_req_out {
 	struct hdcp_port_id	port;
 } __packed;
 
+enum mei_fw_ddi {
+	MEI_DDI_INVALID_PORT = 0x0,
+
+	MEI_DDI_B = 1,
+	MEI_DDI_C,
+	MEI_DDI_D,
+	MEI_DDI_E,
+	MEI_DDI_F,
+	MEI_DDI_A = 7,
+	MEI_DDI_RANGE_END = MEI_DDI_A,
+};
+
+enum mei_i915_port {
+	PORT_NONE = -1,
+
+	PORT_A = 0,
+	PORT_B,
+	PORT_C,
+	PORT_D,
+	PORT_E,
+	PORT_F,
+	I915_MAX_PORTS,
+};
 #endif /* __MEI_HDCP_H__ */
