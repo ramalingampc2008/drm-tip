@@ -529,6 +529,73 @@ mei_repeater_check_flow_prepare_ack(struct device *dev, void *hdcp_data,
 	return 0;
 }
 
+/*
+ * mei_verify_mprime : Function to verify mprime.
+ *
+ * @dev : device corresponding to the mei_cl_device
+ * @hdcp_data : Intel HW specific hdcp data
+ * @stream_ready : RepeaterAuth_Stream_Ready msg for mei verification.
+ *
+ * Returns 0 on Success, <0 on Failure
+ */
+static int mei_verify_mprime(struct device *dev, void *hdcp_data,
+			     struct hdcp2_rep_stream_ready *stream_ready)
+{
+	struct wired_cmd_repeater_auth_stream_req_in
+					verify_mprime_in = { { 0 } };
+	struct wired_cmd_repeater_auth_stream_req_out
+					verify_mprime_out = { { 0 } };
+	struct mei_cl_device *cldev;
+	struct mei_hdcp_data *data = hdcp_data;
+	ssize_t byte;
+
+	if (!dev || !stream_ready || !data)
+		return -EINVAL;
+
+	cldev = to_mei_cl_device(dev);
+
+	verify_mprime_in.header.api_version = HDCP_API_VERSION;
+	verify_mprime_in.header.command_id = WIRED_REPEATER_AUTH_STREAM_REQ;
+	verify_mprime_in.header.status = ME_HDCP_STATUS_SUCCESS;
+	verify_mprime_in.header.buffer_len =
+			WIRED_CMD_BUF_LEN_REPEATER_AUTH_STREAM_REQ_MIN_IN;
+
+	verify_mprime_in.port.integrated_port_type = data->port_type;
+	verify_mprime_in.port.physical_port = data->port;
+
+	memcpy(verify_mprime_in.m_prime, stream_ready->m_prime,
+	       HDCP_2_2_MPRIME_LEN);
+	reverse_endianness((u8 *)&verify_mprime_in.seq_num_m,
+			   HDCP_2_2_SEQ_NUM_LEN, (u8 *)&data->seq_num_m);
+	memcpy(verify_mprime_in.streams, data->streams,
+	       (data->k * sizeof(struct hdcp2_streamid_type)));
+
+	verify_mprime_in.k = __swab16(data->k);
+
+	byte = mei_cldev_send(cldev, (u8 *)&verify_mprime_in,
+			      sizeof(verify_mprime_in));
+	if (byte < 0) {
+		dev_dbg(dev, "mei_cldev_send failed. %zd\n", byte);
+		return byte;
+	}
+
+	byte = mei_cldev_recv(cldev, (u8 *)&verify_mprime_out,
+			      sizeof(verify_mprime_out));
+	if (byte < 0) {
+		dev_dbg(dev, "mei_cldev_recv failed. %zd\n", byte);
+		return byte;
+	}
+
+	if (verify_mprime_out.header.status != ME_HDCP_STATUS_SUCCESS) {
+		dev_dbg(dev, "ME cmd 0x%08X failed. status: 0x%X\n",
+			WIRED_REPEATER_AUTH_STREAM_REQ,
+			verify_mprime_out.header.status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 static __attribute__((unused))
 struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.owner = THIS_MODULE,
@@ -540,7 +607,7 @@ struct i915_hdcp_component_ops mei_hdcp_ops = {
 	.verify_lprime = mei_verify_lprime,
 	.get_session_key = mei_get_session_key,
 	.repeater_check_flow_prepare_ack = mei_repeater_check_flow_prepare_ack,
-	.verify_mprime = NULL,
+	.verify_mprime = mei_verify_mprime,
 	.enable_hdcp_authentication = NULL,
 	.close_hdcp_session = NULL,
 };
