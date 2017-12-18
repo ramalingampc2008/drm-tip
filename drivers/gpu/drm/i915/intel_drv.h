@@ -2084,6 +2084,11 @@ static inline void intel_backlight_device_unregister(struct intel_connector *con
 void intel_hdcp_atomic_check(struct drm_connector *connector,
 			     struct drm_connector_state *old_state,
 			     struct drm_connector_state *new_state);
+void intel_hdcp_atomic_pre_commit(struct drm_connector *connector,
+				  struct drm_connector_state *old_state,
+				  struct drm_connector_state *new_state);
+void intel_hdcp_atomic_commit(struct drm_connector *connector,
+			      struct drm_connector_state *new_state);
 int intel_hdcp_init(struct intel_connector *connector,
 		    const struct intel_hdcp_shim *hdcp_shim,
 		    bool hdcp2_supported);
