@@ -13034,6 +13034,8 @@ static void intel_atomic_commit_tail(struct drm_atomic_state *state)
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
 	struct intel_crtc_state *new_intel_crtc_state, *old_intel_crtc_state;
+	struct drm_connector_state *old_conn_state, *new_conn_state;
+	struct drm_connector *connector;
 	struct drm_crtc *crtc;
 	struct intel_crtc *intel_crtc;
 	u64 put_domains[I915_MAX_PIPES] = {};
@@ -13128,8 +13130,16 @@ static void intel_atomic_commit_tail(struct drm_atomic_state *state)
 		}
 	}
 
+	for_each_oldnew_connector_in_state(state, connector, old_conn_state,
+					   new_conn_state, i)
+		intel_hdcp_atomic_pre_commit(connector, old_conn_state,
+					     new_conn_state);
+
 	/* Now enable the clocks, plane, pipe, and connectors that we set up. */
 	dev_priv->display.update_crtcs(state);
+
+	for_each_new_connector_in_state(state, connector, new_conn_state, i)
+		intel_hdcp_atomic_commit(connector, new_conn_state);
 
 	/* FIXME: We should call drm_atomic_helper_commit_hw_done() here
 	 * already, but still need the state for the delayed optimization. To

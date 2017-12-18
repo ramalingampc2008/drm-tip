@@ -1876,7 +1876,6 @@ void intel_hdcp_atomic_check(struct drm_connector *connector,
 {
 	u64 old_cp = old_state->content_protection;
 	u64 new_cp = new_state->content_protection;
-	struct drm_crtc_state *crtc_state;
 
 	if (!new_state->crtc) {
 		/*
@@ -1897,10 +1896,35 @@ void intel_hdcp_atomic_check(struct drm_connector *connector,
 	    (old_cp == DRM_MODE_CONTENT_PROTECTION_DESIRED &&
 	     new_cp == DRM_MODE_CONTENT_PROTECTION_ENABLED))
 		return;
+}
 
-	crtc_state = drm_atomic_get_new_crtc_state(new_state->state,
-						   new_state->crtc);
-	crtc_state->mode_changed = true;
+void intel_hdcp_atomic_pre_commit(struct drm_connector *connector,
+				  struct drm_connector_state *old_state,
+				  struct drm_connector_state *new_state)
+{
+	u64 old_cp = old_state->content_protection;
+	u64 new_cp = new_state->content_protection;
+
+	/*
+	 * Disable HDCP if the connector is becoming disabled, or if requested
+	 * via the property.
+	 */
+	if ((!new_state->crtc &&
+	     old_cp != DRM_MODE_CONTENT_PROTECTION_UNDESIRED) ||
+	    (new_state->crtc &&
+	     old_cp != DRM_MODE_CONTENT_PROTECTION_UNDESIRED &&
+	     new_cp == DRM_MODE_CONTENT_PROTECTION_UNDESIRED))
+		intel_hdcp_disable(to_intel_connector(connector));
+}
+
+void intel_hdcp_atomic_commit(struct drm_connector *connector,
+			      struct drm_connector_state *new_state)
+{
+	u64 new_cp = new_state->content_protection;
+
+	/* Enable hdcp if it's desired */
+	if (new_state->crtc && new_cp == DRM_MODE_CONTENT_PROTECTION_DESIRED)
+		intel_hdcp_enable(to_intel_connector(connector));
 }
 
 /* Handles the CP_IRQ raised from the DP HDCP sink */
