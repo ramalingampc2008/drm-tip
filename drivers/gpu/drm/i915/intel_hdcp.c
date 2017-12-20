@@ -1805,6 +1805,10 @@ int intel_hdcp_init(struct intel_connector *connector,
 	if (ret)
 		return ret;
 
+	ret = drm_connector_attach_cp_srm_property(&connector->base);
+	if (ret)
+		return ret;
+
 	hdcp->shim = shim;
 	mutex_init(&hdcp->mutex);
 	INIT_DELAYED_WORK(&hdcp->check_work, intel_hdcp_check_work);
@@ -1817,7 +1821,145 @@ int intel_hdcp_init(struct intel_connector *connector,
 	return 0;
 }
 
-int intel_hdcp_enable(struct intel_connector *connector, u8 content_type)
+static u32 intel_hdcp_get_revocated_ksv_count(u8 *buf, u32 vrls_length)
+{
+	u32 parsed_bytes = 0, ksv_count = 0, vrl_ksv_cnt, vrl_sz;
+
+	do {
+		vrl_ksv_cnt = *buf;
+		ksv_count += vrl_ksv_cnt;
+
+		vrl_sz = (vrl_ksv_cnt * DRM_HDCP_KSV_LEN) + 1;
+		buf += vrl_sz;
+		parsed_bytes += vrl_sz;
+	} while (parsed_bytes < vrls_length);
+
+	return ksv_count;
+}
+
+static u32 intel_hdcp_get_revocated_ksvs(u8 *ksv_list, const u8 *buf,
+					u32 vrls_length)
+{
+	u32 parsed_bytes = 0, ksv_count = 0;
+	u32 vrl_ksv_cnt, vrl_ksv_sz, vrl_idx = 0;
+
+	do {
+		vrl_ksv_cnt = *buf;
+		vrl_ksv_sz = vrl_ksv_cnt * DRM_HDCP_KSV_LEN;
+
+		buf++;
+
+		DRM_INFO("vrl: %d, Revoked KSVs: %d\n", vrl_idx++,
+							vrl_ksv_cnt);
+		memcpy(ksv_list, buf, vrl_ksv_sz);
+
+		ksv_count += vrl_ksv_cnt;
+		ksv_list += vrl_ksv_sz;
+		buf += vrl_ksv_sz;
+
+		parsed_bytes += (vrl_ksv_sz + 1);
+	} while (parsed_bytes < vrls_length);
+
+	return ksv_count;
+}
+
+static int intel_hdcp_parse_srm(struct drm_connector *connector,
+				struct drm_property_blob *blob)
+{
+	struct intel_hdcp *hdcp = &(to_intel_connector(connector)->hdcp);
+	struct cp_srm_header *header;
+	u32 vrl_length, ksv_count;
+	u8 *buf;
+
+	if (blob->length < (sizeof(struct cp_srm_header) +
+			    DRM_HDCP_1_4_VRL_LENGTH_SIZE +
+			    DRM_HDCP_1_4_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length\n");
+		return -EINVAL;
+	}
+
+	header = (struct cp_srm_header *)blob->data;
+
+	DRM_INFO("SRM ID: 0x%x, SRM Ver: 0x%x, SRM Gen No: 0x%x\n",
+				header->spec_indicator.srm_id,
+				__swab16(header->srm_version),
+				header->srm_gen_no);
+
+	WARN_ON(header->spec_indicator.reserved_hi ||
+			header->spec_indicator.reserved_lo);
+
+	if (header->spec_indicator.srm_id != DRM_HDCP_1_4_SRM_ID) {
+		DRM_ERROR("Invalid srm_id\n");
+		return -EINVAL;
+	}
+
+	buf = blob->data + sizeof(*header);
+
+	vrl_length = (*buf << 16 | *(buf + 1) << 8 | *(buf + 2));
+
+	if (blob->length < (sizeof(struct cp_srm_header) + vrl_length) ||
+		vrl_length < (DRM_HDCP_1_4_VRL_LENGTH_SIZE +
+			      DRM_HDCP_1_4_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length or vrl length\n");
+		return -EINVAL;
+	}
+
+	/* Length of the all vrls combined */
+	vrl_length -= (DRM_HDCP_1_4_VRL_LENGTH_SIZE +
+		       DRM_HDCP_1_4_DCP_SIG_SIZE);
+
+	if (!vrl_length) {
+		DRM_DEBUG("No vrl found\n");
+		return -EINVAL;
+	}
+
+	buf += DRM_HDCP_1_4_VRL_LENGTH_SIZE;
+
+
+	ksv_count = intel_hdcp_get_revocated_ksv_count(buf, vrl_length);
+	if (!ksv_count) {
+		DRM_INFO("Revocated KSV count is 0\n");
+		return 0;
+	}
+
+	kfree(hdcp->revocated_ksv_list);
+	hdcp->revocated_ksv_list = kzalloc(ksv_count * DRM_HDCP_KSV_LEN,
+					   GFP_KERNEL);
+	if (!hdcp->revocated_ksv_list) {
+		DRM_ERROR("Out of Memory\n");
+		return -ENOMEM;
+	}
+
+	if (intel_hdcp_get_revocated_ksvs(hdcp->revocated_ksv_list,
+					  buf, vrl_length) != ksv_count) {
+		hdcp->revocated_ksv_cnt = 0;
+		kfree(hdcp->revocated_ksv_list);
+		return -EINVAL;
+	}
+
+	hdcp->revocated_ksv_cnt = ksv_count;
+	return 0;
+}
+
+static void intel_hdcp_update_srm(struct intel_connector *intel_connector,
+				  u64 srm_blob_id)
+{
+	struct drm_connector *connector= &intel_connector->base;
+	struct intel_hdcp *hdcp = &intel_connector->hdcp;
+	struct drm_property_blob *blob;
+
+	blob = drm_property_lookup_blob(connector->dev, srm_blob_id);
+	if (!blob || !blob->data)
+		return;
+
+	if (!intel_hdcp_parse_srm(connector, blob))
+		hdcp->srm_blob_id = srm_blob_id;
+
+	drm_property_blob_put(blob);
+}
+
+int intel_hdcp_enable(struct intel_connector *connector, u8 content_type,
+		      u64 srm_blob_id)
 {
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	unsigned long check_link_interval = DRM_HDCP_CHECK_PERIOD_MS;
@@ -1830,6 +1972,8 @@ int intel_hdcp_enable(struct intel_connector *connector, u8 content_type)
 	WARN_ON(hdcp->value == DRM_MODE_CONTENT_PROTECTION_ENABLED);
 
 	hdcp->content_type = content_type;
+	if (srm_blob_id && srm_blob_id != hdcp->srm_blob_id)
+		intel_hdcp_update_srm(connector, srm_blob_id);
 
 	/*
 	 * Considering that HDCP2.2 is more secure than HDCP1.4, If the setup
@@ -1915,6 +2059,8 @@ void intel_hdcp_atomic_check(struct drm_connector *connector,
 	u64 new_cp = new_state->content_protection;
 	u64 old_cp_type = old_state->cp_content_type;
 	u64 new_cp_type = new_state->cp_content_type;
+	u64 old_srm_id = old_state->cp_srm_blob_id;
+	u64 new_srm_id = new_state->cp_srm_blob_id;
 	struct drm_crtc_state *crtc_state;
 
 	if (!new_state->crtc) {
@@ -1932,7 +2078,7 @@ void intel_hdcp_atomic_check(struct drm_connector *connector,
 	 * Nothing to do if the state didn't change, or HDCP was activated since
 	 * the last commit
 	 */
-	if ((old_cp_type == new_cp_type) &&
+	if ((old_cp_type == new_cp_type) && (old_srm_id == new_srm_id) &&
 	    (old_cp == new_cp ||
 	     (old_cp == DRM_MODE_CONTENT_PROTECTION_DESIRED &&
 	      new_cp == DRM_MODE_CONTENT_PROTECTION_ENABLED)))

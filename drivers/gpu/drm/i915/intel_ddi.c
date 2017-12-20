@@ -3498,9 +3498,11 @@ static void intel_enable_ddi(struct intel_encoder *encoder,
 
 	/* Enable hdcp if it's desired */
 	if (conn_state->content_protection ==
-	    DRM_MODE_CONTENT_PROTECTION_DESIRED)
+	    DRM_MODE_CONTENT_PROTECTION_DESIRED) {
 		intel_hdcp_enable(to_intel_connector(conn_state->connector),
-				  (u8)conn_state->cp_content_type);
+				  (u8)conn_state->cp_content_type,
+				  conn_state->cp_srm_blob_id);
+	}
 }
 
 static void intel_disable_ddi_dp(struct intel_encoder *encoder,
@@ -3569,29 +3571,38 @@ static void intel_ddi_update_hdcp(struct intel_encoder *encoder,
 {
 	struct drm_connector *connector;
 	struct drm_connector_state *old_conn_state;
-	bool restart_hdcp_to_update_type = false;
+	bool restart_hdcp = false;
 	int i;
 
+	/*
+	 * If SRM or content_type is changed when HDCP is not UNDESIRED,
+	 * restart the HDCP with new SRM and content_type.
+	 */
 	for_each_old_connector_in_state(conn_state->state, connector,
 					old_conn_state, i) {
-		if (connector == conn_state->connector)
-			if (old_conn_state->cp_content_type !=
-			    conn_state->cp_content_type &&
-			    old_conn_state->content_protection !=
-			    DRM_MODE_CONTENT_PROTECTION_UNDESIRED)
-				restart_hdcp_to_update_type = true;
+		if (connector == conn_state->connector &&
+		    old_conn_state->content_protection !=
+		    DRM_MODE_CONTENT_PROTECTION_UNDESIRED)
+			if ((old_conn_state->cp_content_type !=
+			    conn_state->cp_content_type) ||
+			    (old_conn_state->cp_srm_blob_id !=
+			    conn_state->cp_srm_blob_id))
+				restart_hdcp = true;
 	}
 
-	if (restart_hdcp_to_update_type) {
+	if (restart_hdcp) {
 		intel_hdcp_disable(to_intel_connector(conn_state->connector));
 		intel_hdcp_enable(to_intel_connector(conn_state->connector),
-				  (u8)conn_state->content_type);
+				  (u8)conn_state->content_type,
+				  conn_state->cp_srm_blob_id);
+		return;
 	}
 
 	if (conn_state->content_protection ==
 	    DRM_MODE_CONTENT_PROTECTION_DESIRED)
 		intel_hdcp_enable(to_intel_connector(conn_state->connector),
-				  (u8)conn_state->content_type);
+				  (u8)conn_state->content_type,
+				  conn_state->cp_srm_blob_id);
 	else if (conn_state->content_protection ==
 		 DRM_MODE_CONTENT_PROTECTION_UNDESIRED)
 		intel_hdcp_disable(to_intel_connector(conn_state->connector));
