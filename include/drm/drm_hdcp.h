@@ -250,4 +250,19 @@ struct hdcp2_dp_errata_stream_type {
 #define HDCP_2_2_HDMI_RXSTATUS_READY(x)		((x) & BIT(2))
 #define HDCP_2_2_HDMI_RXSTATUS_REAUTH_REQ(x)	((x) & BIT(3))
 
+/*
+ * Library functions for endianness are aligned for 16/32/64 bits.
+ * But hdcp sequence numbers are 24bits. So for their Byte swapping,
+ * a conversion function is developed.
+ */
+static inline void reverse_endianness(u8 *dest, size_t sz, u8 *src)
+{
+	u32 index;
+
+	if (!sz || sz > sizeof(u32))
+		return;
+	for (index = 0; index < sz; index++)
+		dest[sz - index - 1] = src[index];
+}
+
 #endif
