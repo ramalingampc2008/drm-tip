@@ -1626,6 +1626,81 @@ static int _intel_hdcp2_disable(struct intel_connector *connector)
 	return ret;
 }
 
+/* Implements the Link Integrity Check for HDCP2.2 */
+static int intel_hdcp2_check_link(struct intel_connector *connector)
+{
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+	enum port port = connector->encoder->port;
+
+	int ret = 0;
+
+	if (!hdcp->shim)
+		return -ENOENT;
+
+	mutex_lock(&hdcp->mutex);
+
+	if (hdcp->value == DRM_MODE_CONTENT_PROTECTION_UNDESIRED)
+		goto out;
+
+	if (!(I915_READ(HDCP2_STATUS_DDI(port)) & LINK_ENCRYPTION_STATUS)) {
+		DRM_ERROR("HDCP2.2 check failed: link is not encrypted, %x\n",
+			  I915_READ(HDCP2_STATUS_DDI(port)));
+		ret = -ENXIO;
+		hdcp->value = DRM_MODE_CONTENT_PROTECTION_DESIRED;
+		schedule_work(&hdcp->prop_work);
+		goto out;
+	}
+
+	ret = hdcp->shim->check_2_2_link(intel_dig_port);
+	if (ret == DRM_HDCP_LINK_PROTECTED) {
+		if (hdcp->value != DRM_MODE_CONTENT_PROTECTION_UNDESIRED) {
+			hdcp->value = DRM_MODE_CONTENT_PROTECTION_ENABLED;
+			schedule_work(&hdcp->prop_work);
+		}
+		goto out;
+	}
+
+	DRM_DEBUG_KMS("[%s:%d] HDCP2.2 link failed, retrying auth\n",
+		      connector->base.name, connector->base.base.id);
+
+	ret = _intel_hdcp2_disable(connector);
+	if (ret) {
+		DRM_ERROR("[%s:%d] Failed to disable hdcp2.2 (%d)\n",
+			  connector->base.name, connector->base.base.id, ret);
+		hdcp->value = DRM_MODE_CONTENT_PROTECTION_DESIRED;
+		schedule_work(&hdcp->prop_work);
+		goto out;
+	}
+
+	ret = _intel_hdcp2_enable(connector);
+	if (ret) {
+		DRM_DEBUG_KMS("[%s:%d] Failed to enable hdcp2.2 (%d)\n",
+			      connector->base.name, connector->base.base.id,
+			      ret);
+		hdcp->value = DRM_MODE_CONTENT_PROTECTION_DESIRED;
+		schedule_work(&hdcp->prop_work);
+		goto out;
+	}
+
+out:
+	mutex_unlock(&hdcp->mutex);
+	return ret;
+}
+
+static void intel_hdcp2_check_work(struct work_struct *work)
+{
+	struct intel_hdcp *hdcp = container_of(to_delayed_work(work),
+					       struct intel_hdcp,
+					       hdcp2_check_work);
+	struct intel_connector *connector = intel_hdcp_to_connector(hdcp);
+
+	if (!intel_hdcp2_check_link(connector))
+		schedule_delayed_work(&hdcp->hdcp2_check_work,
+				      DRM_HDCP2_CHECK_PERIOD_MS);
+}
+
 static int i915_hdcp_component_master_bind(struct device *dev)
 {
 	struct drm_i915_private *dev_priv = kdev_to_i915(dev);
@@ -1762,6 +1837,7 @@ static void intel_hdcp2_init(struct intel_connector *connector)
 		return;
 	}
 
+	INIT_DELAYED_WORK(&hdcp->hdcp2_check_work, intel_hdcp2_check_work);
 	hdcp->hdcp2_supported = 1;
 }
 
@@ -1836,8 +1912,12 @@ int intel_hdcp_enable(struct intel_connector *connector)
 	 * Considering that HDCP2.2 is more secure than HDCP1.4, If the setup
 	 * is capable of HDCP2.2, it is preferred to use HDCP2.2.
 	 */
-	if (intel_hdcp2_capable(connector))
+	if (intel_hdcp2_capable(connector)) {
 		ret = _intel_hdcp2_enable(connector);
+		if (!ret)
+			schedule_delayed_work(&hdcp->hdcp2_check_work,
+					      DRM_HDCP2_CHECK_PERIOD_MS);
+	}
 
 	/* When HDCP2.2 fails, HDCP1.4 will be attempted */
 	if (ret && intel_hdcp_capable(connector)) {
@@ -1876,6 +1956,7 @@ int intel_hdcp_disable(struct intel_connector *connector)
 
 	mutex_unlock(&hdcp->mutex);
 	cancel_delayed_work_sync(&hdcp->check_work);
+	cancel_delayed_work_sync(&hdcp->hdcp2_check_work);
 	return ret;
 }
 

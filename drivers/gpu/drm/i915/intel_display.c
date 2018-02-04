@@ -15833,15 +15833,20 @@ static void intel_hpd_poll_fini(struct drm_device *dev)
 {
 	struct intel_connector *connector;
 	struct drm_connector_list_iter conn_iter;
+	struct intel_hdcp *hdcp;
 
 	/* Kill all the work that may have been queued by hpd. */
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	for_each_intel_connector_iter(connector, &conn_iter) {
+		hdcp = &connector->hdcp;
+
 		if (connector->modeset_retry_work.func)
 			cancel_work_sync(&connector->modeset_retry_work);
-		if (connector->hdcp.shim) {
-			cancel_delayed_work_sync(&connector->hdcp.check_work);
-			cancel_work_sync(&connector->hdcp.prop_work);
+		if (hdcp->shim) {
+			cancel_delayed_work_sync(&hdcp->check_work);
+			cancel_work_sync(&hdcp->prop_work);
+			if (hdcp->hdcp2_supported)
+				cancel_delayed_work_sync(&hdcp->hdcp2_check_work);
 		}
 	}
 	drm_connector_list_iter_end(&conn_iter);

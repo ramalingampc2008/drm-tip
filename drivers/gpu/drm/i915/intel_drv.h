@@ -403,6 +403,9 @@ struct intel_hdcp_shim {
 	 */
 	int (*config_stream_type)(struct intel_digital_port *intel_dig_port,
 				  void *buf, size_t size);
+
+	/* HDCP2.2 Link Integrity Check */
+	int (*check_2_2_link)(struct intel_digital_port *intel_dig_port);
 };
 
 struct intel_hdcp {
@@ -445,6 +448,8 @@ struct intel_hdcp {
 	 * over re-Auth has to be triggered.
 	 */
 	u32 seq_num_m;
+
+	struct delayed_work hdcp2_check_work;
 };
 
 struct intel_connector {
