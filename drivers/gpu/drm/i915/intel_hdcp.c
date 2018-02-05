@@ -1899,6 +1899,9 @@ int intel_hdcp_init(struct intel_connector *connector,
 	if (hdcp2_supported)
 		intel_hdcp2_init(connector);
 
+	atomic_set(&hdcp->cp_irq_recved, 0);
+	init_waitqueue_head(&hdcp->cp_irq_queue);
+
 	return 0;
 }
 
@@ -2036,4 +2039,7 @@ void intel_hdcp_handle_cp_irq(struct intel_connector *connector)
 		intel_hdcp_check_link(connector);
 	else if (intel_hdcp2_in_use(connector))
 		intel_hdcp2_check_link(connector);
+
+	atomic_set(&connector->hdcp.cp_irq_recved, 1);
+	wake_up_all(&connector->hdcp.cp_irq_queue);
 }
