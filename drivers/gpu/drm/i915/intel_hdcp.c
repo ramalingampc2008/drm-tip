@@ -117,6 +117,26 @@ static bool intel_hdcp2_capable(struct intel_connector *connector)
 	return capable;
 }
 
+static inline bool intel_hdcp_in_use(struct intel_connector *connector)
+{
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
+	enum port port = connector->encoder->port;
+	u32 reg;
+
+	reg = I915_READ(PORT_HDCP_STATUS(port));
+	return reg & (HDCP_STATUS_AUTH | HDCP_STATUS_ENC);
+}
+
+static inline bool intel_hdcp2_in_use(struct intel_connector *connector)
+{
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
+	enum port port = connector->encoder->port;
+	u32 reg;
+
+	reg = I915_READ(HDCP2_STATUS_DDI(port));
+	return reg & (LINK_ENCRYPTION_STATUS | LINK_AUTH_STATUS);
+}
+
 static int intel_hdcp_poll_ksv_fifo(struct intel_digital_port *intel_dig_port,
 				    const struct intel_hdcp_shim *shim)
 {
@@ -2007,4 +2027,13 @@ void intel_hdcp_atomic_check(struct drm_connector *connector,
 	crtc_state = drm_atomic_get_new_crtc_state(new_state->state,
 						   new_state->crtc);
 	crtc_state->mode_changed = true;
+}
+
+/* Handles the CP_IRQ raised from the DP HDCP sink */
+void intel_hdcp_handle_cp_irq(struct intel_connector *connector)
+{
+	if (intel_hdcp_in_use(connector))
+		intel_hdcp_check_link(connector);
+	else if (intel_hdcp2_in_use(connector))
+		intel_hdcp2_check_link(connector);
 }
