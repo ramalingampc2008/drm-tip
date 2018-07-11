@@ -46,4 +46,15 @@ struct i915_audio_component {
 	int aud_sample_rate[MAX_PORTS];
 };
 
+/**
+ * struct i915_component_master - Used for communication between i915
+ *				  and any other drivers for the services
+ *				  of different feature.
+ */
+struct i915_component_master {
+	/*
+	 * Add here the interface details between I915 and interested modules.
+	 */
+};
+
 #endif /* _I915_COMPONENT_H_ */

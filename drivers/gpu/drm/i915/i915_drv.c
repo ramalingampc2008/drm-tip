@@ -39,12 +39,14 @@
 #include <linux/vgaarb.h>
 #include <linux/vga_switcheroo.h>
 #include <linux/vt.h>
+#include <linux/component.h>
 #include <acpi/video.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/i915_drm.h>
+#include <drm/i915_component.h>
 
 #include "i915_drv.h"
 #include "i915_trace.h"
@@ -1577,8 +1579,6 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	if (IS_GEN(dev_priv, 5))
 		intel_gpu_ips_init(dev_priv);
 
-	intel_audio_init(dev_priv);
-
 	/*
 	 * Some ports require correctly set-up hpd registers for detection to
 	 * work properly (leading to ghost connected connector status), e.g. VGA
@@ -1609,7 +1609,6 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 	intel_power_domains_disable(dev_priv);
 
 	intel_fbdev_unregister(dev_priv);
-	intel_audio_deinit(dev_priv);
 
 	/*
 	 * After flushing the fbdev (incl. a late async config which will
@@ -1694,6 +1693,48 @@ static void i915_driver_destroy(struct drm_i915_private *i915)
 	pci_set_drvdata(pdev, NULL);
 }
 
+static void i915_driver_load_tail(struct drm_i915_private *dev_priv)
+{
+	i915_driver_register(dev_priv);
+
+	DRM_INFO("load_tail: I915 driver registered\n");
+}
+
+static void i915_driver_unload_head(struct drm_i915_private *dev_priv)
+{
+	i915_driver_unregister(dev_priv);
+
+	DRM_INFO("unload_head: I915 driver unregistered\n");
+}
+
+static int i915_component_master_bind(struct device *dev)
+{
+	struct drm_i915_private *dev_priv = kdev_to_i915(dev);
+	int ret;
+
+	ret = component_bind_all(dev, dev_priv->comp_master);
+	if (ret < 0)
+		return ret;
+
+	i915_driver_load_tail(dev_priv);
+
+	return 0;
+}
+
+static void i915_component_master_unbind(struct device *dev)
+{
+	struct drm_i915_private *dev_priv = kdev_to_i915(dev);
+
+	i915_driver_unload_head(dev_priv);
+	drm_atomic_helper_shutdown(&dev_priv->drm);
+	component_unbind_all(dev, dev_priv->comp_master);
+}
+
+static const struct component_master_ops i915_component_master_ops = {
+	.bind = i915_component_master_bind,
+	.unbind = i915_component_master_unbind,
+};
+
 /**
  * i915_driver_load - setup chip and create an initial config
  * @pdev: PCI device
@@ -1720,9 +1761,22 @@ int i915_driver_load(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (!i915_modparams.nuclear_pageflip && match_info->gen < 5)
 		dev_priv->drm.driver_features &= ~DRIVER_ATOMIC;
 
+	dev_priv->comp_master = kzalloc(sizeof(*dev_priv->comp_master),
+					GFP_KERNEL);
+	if (!dev_priv->comp_master) {
+		ret = -ENOMEM;
+		goto out_fini;
+	}
+
+	component_match_alloc(dev_priv->drm.dev, &dev_priv->master_match);
+	if (!dev_priv->master_match) {
+		ret = -ENOMEM;
+		goto out_comp_master_clean;
+	}
+
 	ret = pci_enable_device(pdev);
 	if (ret)
-		goto out_fini;
+		goto out_comp_master_clean;
 
 	ret = i915_driver_init_early(dev_priv);
 	if (ret < 0)
@@ -1742,14 +1796,36 @@ int i915_driver_load(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret < 0)
 		goto out_cleanup_hw;
 
-	i915_driver_register(dev_priv);
+	ret = component_master_add_with_match(dev_priv->drm.dev,
+					      &i915_component_master_ops,
+					      dev_priv->master_match);
+	if (ret < 0) {
+		DRM_DEV_ERROR(&pdev->dev, "Master comp add failed %d\n",
+			      ret);
+		goto out_cleanup_modeset;
+	}
+
+	/*
+	 * FIXME: intel_audio_(de)init calls the component_add(del) unlocked
+	 * versions. Since i915_driver_(un)register called from the unlocked
+	 * version of component_master_add, we need to move intel_audio_(de)init
+	 * out of the (un)register functions to avoid the component mutex
+	 * deadlock. So solution is defining and calling the
+	 * component_add_locked() for recursive component addition.
+	 */
+
+	intel_audio_init(dev_priv);
 
 	enable_rpm_wakeref_asserts(dev_priv);
 
 	i915_welcome_messages(dev_priv);
 
+	DRM_INFO("I915 registration waits for req component(s). if any...\n");
+
 	return 0;
 
+out_cleanup_modeset:
+	intel_modeset_cleanup(&dev_priv->drm);
 out_cleanup_hw:
 	i915_driver_cleanup_hw(dev_priv);
 out_cleanup_mmio:
@@ -1759,6 +1835,8 @@ out_runtime_pm_put:
 	i915_driver_cleanup_early(dev_priv);
 out_pci_disable:
 	pci_disable_device(pdev);
+out_comp_master_clean:
+	kfree(dev_priv->comp_master);
 out_fini:
 	i915_load_error(dev_priv, "Device initialization failed (%d)\n", ret);
 	i915_driver_destroy(dev_priv);
@@ -1772,12 +1850,13 @@ void i915_driver_unload(struct drm_device *dev)
 
 	disable_rpm_wakeref_asserts(dev_priv);
 
-	i915_driver_unregister(dev_priv);
+	component_master_del(dev_priv->drm.dev, &i915_component_master_ops);
+	kfree(dev_priv->comp_master);
+
+	intel_audio_deinit(dev_priv);
 
 	if (i915_gem_suspend(dev_priv))
 		DRM_ERROR("failed to idle hardware; continuing to unload!\n");
-
-	drm_atomic_helper_shutdown(dev);
 
 	intel_gvt_cleanup(dev_priv);
 

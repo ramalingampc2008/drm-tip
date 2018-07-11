@@ -2004,6 +2004,9 @@ struct drm_i915_private {
 
 	struct i915_pmu pmu;
 
+	struct i915_component_master *comp_master;
+	struct component_match *master_match;
+
 	/*
 	 * NOTE: This is the dri1/ums dungeon, don't add stuff here. Your patch
 	 * will be rejected. Instead look for a better place.
