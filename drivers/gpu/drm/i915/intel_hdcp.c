@@ -12,6 +12,7 @@
 #include <linux/i2c.h>
 #include <linux/random.h>
 #include <linux/component.h>
+#include <linux/delay.h>
 
 #include "intel_drv.h"
 #include "i915_reg.h"
@@ -23,6 +24,27 @@
 	typeof(p) __p = (p);                               \
 	__p == PORT_A ? MEI_DDI_A : (enum mei_hdcp_ddi)__p;\
 })
+
+static void kbl_repositioning_enc_en_signal(struct intel_connector *connector)
+{
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+	struct drm_crtc *crtc = connector->base.state->crtc;
+	struct intel_crtc *intel_crtc = container_of(crtc,
+						     struct intel_crtc, base);
+	u32 scanline;
+
+	for (;;) {
+		scanline = I915_READ(PIPEDSL(intel_crtc->pipe));
+		if (scanline > 100 && scanline < 200)
+			break;
+		usleep_range(25, 50);
+	}
+
+	hdcp->shim->toggle_signalling(intel_dig_port, false);
+	hdcp->shim->toggle_signalling(intel_dig_port, true);
+}
 
 static
 bool intel_hdcp_is_ksv_valid(u8 *ksv)
@@ -1527,6 +1549,13 @@ static int hdcp2_enable_encryption(struct intel_connector *connector)
 	}
 
 	if (I915_READ(HDCP2_STATUS_DDI(port)) & LINK_AUTH_STATUS) {
+		/*
+		 * WA: To fix incorrect positioning of the window of
+		 * opportunity and enc_en signalling in KABYLAKE.
+		 */
+		if (IS_KABYLAKE(dev_priv) && hdcp->shim->toggle_signalling)
+			kbl_repositioning_enc_en_signal(connector);
+
 		/* Link is Authenticated. Now set for Encryption */
 		I915_WRITE(HDCP2_CTL_DDI(port),
 			   I915_READ(HDCP2_CTL_DDI(port)) |
