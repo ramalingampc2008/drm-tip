@@ -1283,6 +1283,12 @@ static int hdcp2_authentication_key_exchange(struct intel_connector *connector)
 		return -EPERM;
 	}
 
+	hdcp->downstream_info->ver_in_force = DRM_MODE_HDCP22_IN_FORCE;
+	hdcp->downstream_info->content_type = hdcp->content_type;
+	memcpy(hdcp->downstream_info->bksv, msgs.send_cert.cert_rx.receiver_id,
+	       HDCP_2_2_RECEIVER_ID_LEN);
+	hdcp->downstream_info->is_repeater = hdcp->is_repeater;
+
 	/*
 	 * Here msgs.no_stored_km will hold msgs corresponding to the km
 	 * stored also.
@@ -1474,6 +1480,11 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 		return -EPERM;
 	}
 
+	hdcp->downstream_info->device_count = device_cnt;
+	hdcp->downstream_info->depth = HDCP_2_2_DEPTH(rx_info[0]);
+	memcpy(hdcp->downstream_info->ksv_list, msgs.recvid_list.receiver_ids,
+	       device_cnt * HDCP_2_2_RECEIVER_ID_LEN);
+
 	ret = hdcp2_verify_rep_topology_prepare_ack(connector,
 						    &msgs.recvid_list,
 						    &msgs.rep_ack);
@@ -1660,6 +1671,13 @@ static int _intel_hdcp2_enable(struct intel_connector *connector)
 	if (ret) {
 		DRM_DEBUG_KMS("HDCP2 Type%d  Enabling Failed. (%d)\n",
 			      hdcp->content_type, ret);
+
+		memset(hdcp->downstream_info, 0,
+		       sizeof(struct content_protection_downstream_info));
+		drm_connector_update_content_protection_downstream_property(
+					&connector->base,
+					hdcp->downstream_info);
+
 		return ret;
 	}
 
@@ -1667,12 +1685,17 @@ static int _intel_hdcp2_enable(struct intel_connector *connector)
 		      connector->base.name, connector->base.base.id,
 		      hdcp->content_type);
 
+	drm_connector_update_content_protection_downstream_property(
+					&connector->base,
+					hdcp->downstream_info);
 	hdcp->hdcp2_encrypted = true;
+
 	return 0;
 }
 
 static int _intel_hdcp2_disable(struct intel_connector *connector)
 {
+	struct intel_hdcp *hdcp = &connector->hdcp;
 	int ret;
 
 	DRM_DEBUG_KMS("[%s:%d] HDCP2.2 is being Disabled\n",
@@ -1683,8 +1706,13 @@ static int _intel_hdcp2_disable(struct intel_connector *connector)
 	if (hdcp2_deauthenticate_port(connector) < 0)
 		DRM_DEBUG_KMS("Port deauth failed.\n");
 
-	connector->hdcp.hdcp2_encrypted = false;
+	hdcp->hdcp2_encrypted = false;
 
+	memset(hdcp->downstream_info, 0,
+	       sizeof(struct content_protection_downstream_info));
+	drm_connector_update_content_protection_downstream_property(
+					&connector->base,
+					hdcp->downstream_info);
 	return ret;
 }
 
