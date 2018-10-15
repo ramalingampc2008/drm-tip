@@ -273,6 +273,45 @@ u32 intel_hdcp_get_repeater_ctl(struct intel_digital_port *intel_dig_port)
 	return -EINVAL;
 }
 
+static inline void intel_hdcp_print_ksv(u8 *ksv)
+{
+	DRM_DEBUG_KMS("\t%#04x, %#04x, %#04x, %#04x, %#04x\n", *ksv,
+		      *(ksv + 1), *(ksv + 2), *(ksv + 3), *(ksv + 4));
+}
+
+/* Check if any of the KSV is revocated by DCP LLC through SRM table */
+static inline
+bool intel_hdcp_ksvs_revocated(struct intel_hdcp *hdcp, u8 *ksvs, u32 ksv_count)
+{
+	u32 rev_ksv_cnt = hdcp->revocated_ksv_cnt;
+	u8 *rev_ksv_list = hdcp->revocated_ksv_list;
+	u32 cnt, i, j;
+
+	/* If the Revocated ksv list is empty */
+	if (!rev_ksv_cnt || !rev_ksv_list)
+		return false;
+
+	for  (cnt = 0; cnt < ksv_count; cnt++) {
+		rev_ksv_list = hdcp->revocated_ksv_list;
+		for (i = 0; i < rev_ksv_cnt; i++) {
+			for (j = 0; j < DRM_HDCP_KSV_LEN; j++)
+				if (*(ksvs + j) != *(rev_ksv_list + j)) {
+					break;
+				} else if (j == (DRM_HDCP_KSV_LEN - 1)) {
+					DRM_DEBUG_KMS("Revocated KSV is ");
+					intel_hdcp_print_ksv(ksvs);
+					return true;
+				}
+			/* Move the offset to next KSV in the revocated list */
+			rev_ksv_list += DRM_HDCP_KSV_LEN;
+		}
+
+		/* Iterate to next ksv_offset */
+		ksvs += DRM_HDCP_KSV_LEN;
+	}
+	return false;
+}
+
 static
 int intel_hdcp_validate_v_prime(struct intel_digital_port *intel_dig_port,
 				const struct intel_hdcp_shim *shim,
@@ -490,9 +529,10 @@ int intel_hdcp_validate_v_prime(struct intel_digital_port *intel_dig_port,
 
 /* Implements Part 2 of the HDCP authorization procedure */
 static
-int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
-			       const struct intel_hdcp_shim *shim)
+int intel_hdcp_auth_downstream(struct intel_hdcp *hdcp,
+			       struct intel_digital_port *intel_dig_port)
 {
+	const struct intel_hdcp_shim *shim = hdcp->shim;
 	u8 bstatus[2], num_downstream, *ksv_fifo;
 	int ret, i, tries = 3;
 
@@ -531,6 +571,11 @@ int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
 	if (ret)
 		goto err;
 
+	if (intel_hdcp_ksvs_revocated(hdcp, ksv_fifo, num_downstream)) {
+		DRM_ERROR("Revocated Ksv(s) in ksv_fifo\n");
+		return -EPERM;
+	}
+
 	/*
 	 * When V prime mismatches, DP Spec mandates re-read of
 	 * V prime atleast twice.
@@ -557,9 +602,11 @@ err:
 }
 
 /* Implements Part 1 of the HDCP authorization procedure */
-static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
-			   const struct intel_hdcp_shim *shim)
+static int intel_hdcp_auth(struct intel_connector *connector)
 {
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+	const struct intel_hdcp_shim *shim = hdcp->shim;
 	struct drm_i915_private *dev_priv;
 	enum port port;
 	unsigned long r0_prime_gen_start;
@@ -624,6 +671,11 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	ret = intel_hdcp_read_valid_bksv(intel_dig_port, shim, bksv.shim);
 	if (ret < 0)
 		return ret;
+
+	if (intel_hdcp_ksvs_revocated(hdcp, bksv.shim, 1)) {
+		DRM_ERROR("BKSV is revocated\n");
+		return -EPERM;
+	}
 
 	I915_WRITE(PORT_HDCP_BKSVLO(port), bksv.reg[0]);
 	I915_WRITE(PORT_HDCP_BKSVHI(port), bksv.reg[1]);
@@ -698,7 +750,7 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	 */
 
 	if (repeater_present)
-		return intel_hdcp_auth_downstream(intel_dig_port, shim);
+		return intel_hdcp_auth_downstream(hdcp, intel_dig_port);
 
 	DRM_DEBUG_KMS("HDCP is enabled (no repeater present)\n");
 	return 0;
@@ -735,7 +787,6 @@ static int _intel_hdcp_disable(struct intel_connector *connector)
 
 static int _intel_hdcp_enable(struct intel_connector *connector)
 {
-	struct intel_hdcp *hdcp = &connector->hdcp;
 	struct drm_i915_private *dev_priv = connector->base.dev->dev_private;
 	int i, ret, tries = 3;
 
@@ -760,9 +811,9 @@ static int _intel_hdcp_enable(struct intel_connector *connector)
 
 	/* Incase of authentication failures, HDCP spec expects reauth. */
 	for (i = 0; i < tries; i++) {
-		ret = intel_hdcp_auth(conn_to_dig_port(connector), hdcp->shim);
+		ret = intel_hdcp_auth(connector);
 		if (!ret) {
-			hdcp->hdcp_encrypted = true;
+			connector->hdcp.hdcp_encrypted = true;
 			return 0;
 		}
 
