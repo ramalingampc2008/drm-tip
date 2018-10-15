@@ -826,6 +826,10 @@ drm_atomic_connector_get_property(struct drm_connector *connector,
 		*val = state->content_protection;
 	} else if (property == connector->content_protection_type_property) {
 		*val = state->content_protection_type;
+	} else if (property ==
+		   connector->content_protection_downstream_property) {
+		*val = connector->content_protection_downstream_blob_ptr ?
+		connector->content_protection_downstream_blob_ptr->base.id : 0;
 	} else if (property == config->writeback_fb_id_property) {
 		/* Writeback framebuffer is one-shot, write and forget */
 		*val = 0;
