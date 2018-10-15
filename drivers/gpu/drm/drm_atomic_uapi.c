@@ -746,6 +746,8 @@ static int drm_atomic_connector_set_property(struct drm_connector *connector,
 			return -EINVAL;
 		}
 		state->content_protection = val;
+	} else if (property == connector->cp_content_type_property) {
+		state->cp_content_type = val;
 	} else if (property == config->writeback_fb_id_property) {
 		struct drm_framebuffer *fb = drm_framebuffer_lookup(dev, NULL, val);
 		int ret = drm_atomic_set_writeback_fb_for_connector(state, fb);
@@ -818,6 +820,8 @@ drm_atomic_connector_get_property(struct drm_connector *connector,
 		*val = state->scaling_mode;
 	} else if (property == connector->content_protection_property) {
 		*val = state->content_protection;
+	} else if (property == connector->cp_content_type_property) {
+		*val = state->cp_content_type;
 	} else if (property == config->writeback_fb_id_property) {
 		/* Writeback framebuffer is one-shot, write and forget */
 		*val = 0;

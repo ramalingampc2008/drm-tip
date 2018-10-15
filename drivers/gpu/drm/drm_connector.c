@@ -826,6 +826,12 @@ static struct drm_prop_enum_list drm_cp_enum_list[] = {
 };
 DRM_ENUM_NAME_FN(drm_get_content_protection_name, drm_cp_enum_list)
 
+static struct drm_prop_enum_list drm_cp_content_type_enum_list[] = {
+	{ DRM_MODE_CP_CONTENT_TYPE0, "Type 0" },
+	{ DRM_MODE_CP_CONTENT_TYPE1, "Type 1" },
+};
+DRM_ENUM_NAME_FN(drm_get_cp_content_type_name, drm_cp_content_type_enum_list)
+
 /**
  * DOC: standard connector properties
  *
@@ -1519,6 +1525,44 @@ int drm_connector_attach_content_protection_property(
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_content_protection_property);
+
+/**
+ * drm_connector_attach_cp_content_type_property - attach cp content type
+ * property
+ *
+ * @connector: connector to attach cp content type property on.
+ *
+ * This is used to add support for sending the protected content's stream type
+ * from userspace to kernel on selected connectors. Protected content provider
+ * will decide their type of their content and declare the same to kernel.
+ *
+ * This information will be used during the HDCP2.2 authentication.
+ *
+ * Content type will be set to &drm_connector_state.cp_content_type.
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int
+drm_connector_attach_cp_content_type_property(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_property *prop;
+
+	prop = drm_property_create_enum(dev, 0, "CP_Content_Type",
+					drm_cp_content_type_enum_list,
+					ARRAY_SIZE(
+					drm_cp_content_type_enum_list));
+	if (!prop)
+		return -ENOMEM;
+
+	drm_object_attach_property(&connector->base, prop,
+				   DRM_MODE_CP_CONTENT_TYPE0);
+	connector->cp_content_type_property = prop;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_connector_attach_cp_content_type_property);
 
 /**
  * drm_mode_create_aspect_ratio_property - create aspect ratio property

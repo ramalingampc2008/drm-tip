@@ -210,6 +210,10 @@ extern "C" {
 #define DRM_MODE_CONTENT_PROTECTION_DESIRED     1
 #define DRM_MODE_CONTENT_PROTECTION_ENABLED     2
 
+/* Content Type classification for HDCP2.2 vs others */
+#define DRM_MODE_CP_CONTENT_TYPE0		0
+#define DRM_MODE_CP_CONTENT_TYPE1		1
+
 struct drm_mode_modeinfo {
 	__u32 clock;
 	__u16 hdisplay;

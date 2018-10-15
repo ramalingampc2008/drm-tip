@@ -491,6 +491,12 @@ struct drm_connector_state {
 	unsigned int content_type;
 
 	/**
+	 * @cp_content_type: Connector property to pass the type of protected
+	 * content. This is most commonly used for HDCP.
+	 */
+	unsigned int cp_content_type;
+
+	/**
 	 * @scaling_mode: Connector property to control the
 	 * upscaling, mostly used for built-in panels.
 	 */
@@ -995,6 +1001,12 @@ struct drm_connector {
 	struct drm_property *content_protection_property;
 
 	/**
+	 * @cp_content_type_property: DRM ENUM property for type of
+	 * Protected Content.
+	 */
+	struct drm_property *cp_content_type_property;
+
+	/**
 	 * @path_blob_ptr:
 	 *
 	 * DRM blob property data for the DP MST path property. This should only
@@ -1253,6 +1265,7 @@ const char *drm_get_dvi_i_select_name(int val);
 const char *drm_get_tv_subconnector_name(int val);
 const char *drm_get_tv_select_name(int val);
 const char *drm_get_content_protection_name(int val);
+const char *drm_get_cp_content_type_name(int val);
 
 int drm_mode_create_dvi_i_properties(struct drm_device *dev);
 int drm_mode_create_tv_margin_properties(struct drm_device *dev);
@@ -1267,6 +1280,8 @@ int drm_connector_attach_scaling_mode_property(struct drm_connector *connector,
 int drm_connector_attach_vrr_capable_property(
 		struct drm_connector *connector);
 int drm_connector_attach_content_protection_property(
+		struct drm_connector *connector);
+int drm_connector_attach_cp_content_type_property(
 		struct drm_connector *connector);
 int drm_mode_create_aspect_ratio_property(struct drm_device *dev);
 int drm_mode_create_content_type_property(struct drm_device *dev);
