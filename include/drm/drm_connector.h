@@ -1019,6 +1019,13 @@ struct drm_connector {
 	struct drm_property *cp_srm_property;
 
 	/**
+	 * @cp_downstream_property: DRM BLOB property for content
+	 * protection downstream information.
+	 */
+	struct drm_property *cp_downstream_property;
+	struct drm_property_blob *cp_downstream_blob_ptr;
+
+	/**
 	 * @path_blob_ptr:
 	 *
 	 * DRM blob property data for the DP MST path property. This should only
@@ -1296,6 +1303,11 @@ int drm_connector_attach_content_protection_property(
 int drm_connector_attach_cp_content_type_property(
 		struct drm_connector *connector);
 int drm_connector_attach_cp_srm_property(struct drm_connector *connector);
+int drm_connector_attach_cp_downstream_property(
+		struct drm_connector *connector);
+int drm_mode_connector_update_cp_downstream_property(
+		struct drm_connector *connector,
+		const struct cp_downstream_info *info);
 int drm_mode_create_aspect_ratio_property(struct drm_device *dev);
 int drm_mode_create_content_type_property(struct drm_device *dev);
 void drm_hdmi_avi_infoframe_content_type(struct hdmi_avi_infoframe *frame,
