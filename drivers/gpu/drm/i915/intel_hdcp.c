@@ -1782,6 +1782,12 @@ static void intel_hdcp2_init(struct intel_connector *connector)
 		return;
 	}
 
+	ret = drm_connector_attach_cp_content_type_property(&connector->base);
+	if (ret) {
+		kfree(hdcp->port_data.streams);
+		return;
+	}
+
 	hdcp->hdcp2_supported = true;
 }
 
@@ -1811,7 +1817,7 @@ int intel_hdcp_init(struct intel_connector *connector,
 	return 0;
 }
 
-int intel_hdcp_enable(struct intel_connector *connector)
+int intel_hdcp_enable(struct intel_connector *connector, u8 content_type)
 {
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	unsigned long check_link_interval = DRM_HDCP_CHECK_PERIOD_MS;
@@ -1823,6 +1829,8 @@ int intel_hdcp_enable(struct intel_connector *connector)
 	mutex_lock(&hdcp->mutex);
 	WARN_ON(hdcp->value == DRM_MODE_CONTENT_PROTECTION_ENABLED);
 
+	hdcp->content_type = content_type;
+
 	/*
 	 * Considering that HDCP2.2 is more secure than HDCP1.4, If the setup
 	 * is capable of HDCP2.2, it is preferred to use HDCP2.2.
@@ -1833,8 +1841,12 @@ int intel_hdcp_enable(struct intel_connector *connector)
 			check_link_interval = DRM_HDCP2_CHECK_PERIOD_MS;
 	}
 
-	/* When HDCP2.2 fails, HDCP1.4 will be attempted */
-	if (ret && intel_hdcp_capable(connector)) {
+	/*
+	 * When HDCP2.2 fails and Content Type is not Type1, HDCP1.4 will
+	 * be attempted.
+	 */
+	if (ret && intel_hdcp_capable(connector) &&
+	    hdcp->content_type != DRM_MODE_CP_CONTENT_TYPE1) {
 		ret = _intel_hdcp_enable(connector);
 	}
 
