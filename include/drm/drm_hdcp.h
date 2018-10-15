@@ -300,10 +300,16 @@ struct hdcp2_srm_header {
 
 struct drm_device;
 struct drm_connector;
+struct hdcp_topology_info;
 
 bool drm_hdcp_ksvs_revocated(struct drm_device *dev, u8 *ksvs, u32 ksv_count);
 int drm_connector_attach_content_protection_property(
 		struct drm_connector *connector, bool hdcp_content_type);
 void drm_hdcp_update_content_protection(struct drm_connector *connector,
 					u64 val);
+int drm_connector_attach_hdcp_topology_property(
+				struct drm_connector *connector);
+int drm_connector_update_hdcp_topology_property(
+				struct drm_connector *connector,
+				const struct hdcp_topology_info *info);
 #endif

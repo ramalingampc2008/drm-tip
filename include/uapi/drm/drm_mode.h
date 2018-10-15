@@ -213,6 +213,43 @@ extern "C" {
 #define DRM_MODE_HDCP_CONTENT_TYPE0		0
 #define DRM_MODE_HDCP_CONTENT_TYPE1		1
 
+#define DRM_MODE_HDCP_KSV_LEN			5
+#define DRM_MODE_HDCP_MAX_DEVICE_CNT		127
+#define DRM_MODE_HDCP14_IN_FORCE		(1 << 0)
+#define DRM_MODE_HDCP22_IN_FORCE		(1 << 1)
+
+struct hdcp_topology_info {
+	/* Version of HDCP authenticated (1.4/2.2) */
+	__u32 ver_in_force;
+
+	/* Applicable only for HDCP2.2 */
+	__u32 content_type;
+
+	/* KSV of immediate HDCP Sink. In Little-Endian Format. */
+	__u8 bksv[DRM_MODE_HDCP_KSV_LEN];
+
+	/* Whether Immediate HDCP sink is a repeater? */
+	__u8 is_repeater;
+
+	/* Depth received from immediate downstream repeater */
+	__u8 depth;
+	__u8 pad1;
+
+	/* Device count received from immediate downstream repeater */
+	__u32 device_count;
+
+	/*
+	 * Max buffer required to hold ksv list received from immediate
+	 * repeater. In this array first device_count * DRM_MODE_HDCP_KSV_LEN
+	 * will hold the valid ksv bytes.
+	 * If authentication specification is
+	 *	HDCP1.4 - each KSV's Bytes will be in Little-Endian format.
+	 *	HDCP2.2 - each KSV's Bytes will be in Big-Endian format.
+	 */
+	__u8 ksv_list[DRM_MODE_HDCP_KSV_LEN * DRM_MODE_HDCP_MAX_DEVICE_CNT];
+	__u8 pad2[5];
+} __packed;
+
 struct drm_mode_modeinfo {
 	__u32 clock;
 	__u16 hdisplay;

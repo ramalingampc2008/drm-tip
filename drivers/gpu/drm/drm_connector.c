@@ -246,6 +246,7 @@ int drm_connector_init(struct drm_device *dev,
 	mutex_init(&connector->mutex);
 	connector->edid_blob_ptr = NULL;
 	connector->tile_blob_ptr = NULL;
+	connector->hdcp_topology_blob_ptr = NULL;
 	connector->status = connector_status_unknown;
 	connector->display_info.panel_orientation =
 		DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
@@ -972,6 +973,25 @@ static const struct drm_prop_enum_list hdmi_colorspaces[] = {
  *	authentication process. If content type is changed when
  *	content_protection is not UNDESIRED, then kernel will disable the HDCP
  *	and re-enable with new type in the same atomic commit
+ * HDCP Topology:
+ *	This blob property is used to pass the HDCP downstream topology details
+ *	of a HDCP encrypted connector, from kernel to userspace.
+ *	This provides all required information to userspace, so that userspace
+ *	can implement the HDCP repeater using the kernel as downstream ports of
+ *	the repeater. as illustrated below:
+ *
+ *                          HDCP Repeaters
+ * +--------------------------------------------------------------+
+ * |                                                              |
+ * |                               |                              |
+ * |   Userspace HDCP Receiver  +----->    KMD HDCP transmitters  |
+ * |      (Upstream Port)      <------+     (Downstream Ports)    |
+ * |                               |                              |
+ * |                                                              |
+ * +--------------------------------------------------------------+
+ *
+ *	Kernel will populate this blob only when the HDCP authentication is
+ *	successful.
  *
  * max bpc:
  *	This range property is used by userspace to limit the bit depth. When
