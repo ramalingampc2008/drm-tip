@@ -482,6 +482,8 @@ struct intel_hdcp {
 	wait_queue_head_t cp_irq_queue;
 	atomic_t cp_irq_count;
 	int cp_irq_count_cached;
+
+	struct content_protection_downstream_info *downstream_info;
 };
 
 struct intel_connector {
