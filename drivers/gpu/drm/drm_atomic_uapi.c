@@ -836,6 +836,9 @@ drm_atomic_connector_get_property(struct drm_connector *connector,
 		*val = state->cp_content_type;
 	} else if (property == connector->cp_srm_property) {
 		*val = state->cp_srm_blob_id;
+	} else if (property == connector->cp_downstream_property) {
+		*val = connector->cp_downstream_blob_ptr ?
+			connector->cp_downstream_blob_ptr->base.id : 0;
 	} else if (property == config->writeback_fb_id_property) {
 		/* Writeback framebuffer is one-shot, write and forget */
 		*val = 0;
