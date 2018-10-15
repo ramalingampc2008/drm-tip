@@ -955,6 +955,24 @@ static const struct drm_prop_enum_list hdmi_colorspaces[] = {
  *	  the value transitions from ENABLED to DESIRED. This signifies the link
  *	  is no longer protected and userspace should take appropriate action
  *	  (whatever that might be).
+ * HDCP Content Type:
+ *	This property is used by the userspace to configure the kernel with
+ *	to be displayed stream's content type. Content Type of a stream is
+ *	decided by the owner of the stream, as HDCP Type0 or HDCP Type1.
+ *
+ *	The value of the property can be one the below:
+ *	  - DRM_MODE_HDCP_CONTENT_TYPE0 = 0
+ *		HDCP Type0 streams can be transmitted on a link which is
+ *		encrypted with HDCP 1.4 or HDCP 2.2.
+ *	  - DRM_MODE_HDCP_CONTENT_TYPE1 = 1
+ *		HDCP Type1 streams can be transmitted on a link which is
+ *		encrypted only with HDCP 2.2.
+ *
+ *	Note that the HDCP Content Type property is specific to HDCP 2.2, and
+ *	defaults to type 0. It is only exposed by drivers supporting HDCP 2.2
+ *	If content type is changed when content_protection is not UNDESIRED,
+ *	then kernel will disable the HDCP and re-enable with new type in the
+ *	same atomic commit
  *
  * max bpc:
  *	This range property is used by userspace to limit the bit depth. When
