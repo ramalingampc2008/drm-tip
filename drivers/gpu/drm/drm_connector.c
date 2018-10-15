@@ -857,6 +857,13 @@ static const struct drm_prop_enum_list hdmi_colorspaces[] = {
 	{ DRM_MODE_COLORIMETRY_DCI_P3_RGB_THEATER, "DCI-P3_RGB_Theater" },
 };
 
+static struct drm_prop_enum_list drm_hdcp_content_type_enum_list[] = {
+	{ DRM_MODE_HDCP_CONTENT_TYPE0, "HDCP Type0" },
+	{ DRM_MODE_HDCP_CONTENT_TYPE1, "HDCP Type1" },
+};
+DRM_ENUM_NAME_FN(drm_get_hdcp_content_type_name,
+		 drm_hdcp_content_type_enum_list)
+
 /**
  * DOC: standard connector properties
  *
@@ -962,6 +969,23 @@ static const struct drm_prop_enum_list hdmi_colorspaces[] = {
  *	  the value transitions from ENABLED to DESIRED. This signifies the link
  *	  is no longer protected and userspace should take appropriate action
  *	  (whatever that might be).
+ * HDCP Content Type:
+ *	This property is used by the userspace to configure the kernel with
+ *	upcoming stream's content type. Content Type of a stream is decided by
+ *	the owner of the stream, as HDCP Type0 or HDCP Type1.
+ *
+ *	The value of the property can be one the below:
+ *	  - DRM_MODE_HDCP_CONTENT_TYPE0 = 0
+ *		HDCP Type0 streams can be transmitted on a link which is
+ *		encrypted with HDCP 1.4 or HDCP 2.2.
+ *	  - DRM_MODE_HDCP_CONTENT_TYPE1 = 1
+ *		HDCP Type1 streams can be transmitted on a link which is
+ *		encrypted only with HDCP 2.2.
+ *
+ *	Please note this content type is introduced at HDCP 2.2 and used in its
+ *	authentication process. If content type is changed when
+ *	content_protection is not UNDESIRED, then kernel will disable the HDCP
+ *	and re-enable with new type in the same atomic commit
  *
  * max bpc:
  *	This range property is used by userspace to limit the bit depth. When
@@ -1550,6 +1574,45 @@ int drm_connector_attach_content_protection_property(
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_content_protection_property);
+
+/**
+ * drm_connector_attach_hdcp_content_type_property - attach HDCP
+ * content type property
+ *
+ * @connector: connector to attach HDCP content type property on.
+ *
+ * This is used to add support for sending the protected content's stream type
+ * from userspace to kernel on selected connectors. Protected content provider
+ * will decide their type of their content and declare the same to kernel.
+ *
+ * This information will be used during the HDCP 2.2 authentication.
+ *
+ * Content type will be set to &drm_connector_state.hdcp_content_type.
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int
+drm_connector_attach_hdcp_content_type_property(struct drm_connector *
+						      connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_property *prop;
+
+	prop = drm_property_create_enum(dev, 0, "HDCP Content Type",
+					drm_hdcp_content_type_enum_list,
+					ARRAY_SIZE(
+					drm_hdcp_content_type_enum_list));
+	if (!prop)
+		return -ENOMEM;
+
+	drm_object_attach_property(&connector->base, prop,
+				   DRM_MODE_HDCP_CONTENT_TYPE0);
+	connector->hdcp_content_type_property = prop;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_connector_attach_hdcp_content_type_property);
 
 /**
  * drm_mode_create_aspect_ratio_property - create aspect ratio property
