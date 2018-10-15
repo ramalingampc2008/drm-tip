@@ -487,6 +487,8 @@ struct intel_hdcp {
 	unsigned int revocated_ksv_cnt;
 	u8 *revocated_ksv_list;
 	u32 srm_blob_id;
+
+	struct cp_downstream_info *downstream_info;
 };
 
 struct intel_connector {
