@@ -216,8 +216,16 @@ extern "C" {
 
 #define DRM_MODE_HDCP_KSV_LEN			5
 #define DRM_MODE_HDCP_MAX_DEVICE_CNT		127
+#define DRM_MODE_HDCP14_IN_FORCE		(1<<0)
+#define DRM_MODE_HDCP22_IN_FORCE		(1<<1)
 
 struct cp_downstream_info {
+
+	/* Version of HDCP authenticated (1.4/2.2) */
+	__u32 ver_in_force;
+
+	/* Applicable only for HDCP2.2 */
+	__u8 content_type;
 
 	/* KSV of immediate HDCP Sink. In Little-Endian Format. */
 	char bksv[DRM_MODE_HDCP_KSV_LEN];
