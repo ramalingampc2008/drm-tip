@@ -246,6 +246,7 @@ int drm_connector_init(struct drm_device *dev,
 	mutex_init(&connector->mutex);
 	connector->edid_blob_ptr = NULL;
 	connector->tile_blob_ptr = NULL;
+	connector->hdcp_topology_blob_ptr = NULL;
 	connector->status = connector_status_unknown;
 	connector->display_info.panel_orientation =
 		DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
@@ -986,6 +987,25 @@ DRM_ENUM_NAME_FN(drm_get_hdcp_content_type_name,
  *	authentication process. If content type is changed when
  *	content_protection is not UNDESIRED, then kernel will disable the HDCP
  *	and re-enable with new type in the same atomic commit
+ * HDCP Topology:
+ *	This blob property is used to pass the HDCP downstream topology details
+ *	of a HDCP encrypted connector, from kernel to userspace.
+ *	This provides all required information to userspace, so that userspace
+ *	can implement the HDCP repeater using the kernel as downstream ports of
+ *	the repeater. as illustrated below:
+ *
+ *                          HDCP Repeaters
+ * +--------------------------------------------------------------+
+ * |                                                              |
+ * |                               |                              |
+ * |   Userspace HDCP Receiver  +----->    KMD HDCP transmitters  |
+ * |      (Upstream Port)      <------+     (Downstream Ports)    |
+ * |                               |                              |
+ * |                                                              |
+ * +--------------------------------------------------------------+
+ *
+ *	Kernel will populate this blob only when the HDCP authentication is
+ *	successful.
  *
  * max bpc:
  *	This range property is used by userspace to limit the bit depth. When
@@ -1613,6 +1633,72 @@ drm_connector_attach_hdcp_content_type_property(struct drm_connector *
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_hdcp_content_type_property);
+
+/**
+ * drm_connector_attach_hdcp_topology_property - attach hdcp topology property
+ *
+ * @connector: connector to attach hdcp topology property with.
+ *
+ * This is used to add support for hdcp topology support on select connectors.
+ * When Intel platform is configured as repeater, this downstream info is used
+ * by userspace, to complete the repeater authentication of HDCP specification
+ * with upstream HDCP transmitter.
+ *
+ * The blob_id of the hdcp topology info will be set to
+ * &drm_connector_state.hdcp_topology
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int drm_connector_attach_hdcp_topology_property(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_property *prop;
+
+	prop = drm_property_create(dev, DRM_MODE_PROP_BLOB |
+				   DRM_MODE_PROP_IMMUTABLE,
+				   "HDCP Topology", 0);
+	if (!prop)
+		return -ENOMEM;
+
+	drm_object_attach_property(&connector->base, prop, 0);
+
+	connector->hdcp_topology_property = prop;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_connector_attach_hdcp_topology_property);
+
+/**
+ * drm_connector_update_hdcp_topology_property - update the hdcp topology
+ * property of a connector
+ * @connector: drm connector, the topology is associated to
+ * @hdcp_topology_info: new content for the blob of hdcp_topology property
+ *
+ * This function creates a new blob modeset object and assigns its id to the
+ * connector's hdcp_topology property.
+ *
+ * Returns:
+ * Zero on success, negative errno on failure.
+ */
+int
+drm_connector_update_hdcp_topology_property(struct drm_connector *connector,
+					const struct hdcp_topology_info *info)
+{
+	struct drm_device *dev = connector->dev;
+	int ret;
+
+	if (!info)
+		return -EINVAL;
+
+	ret = drm_property_replace_global_blob(dev,
+			&connector->hdcp_topology_blob_ptr,
+			sizeof(struct hdcp_topology_info),
+			info, &connector->base,
+			connector->hdcp_topology_property);
+	return ret;
+}
+EXPORT_SYMBOL(drm_connector_update_hdcp_topology_property);
 
 /**
  * drm_mode_create_aspect_ratio_property - create aspect ratio property

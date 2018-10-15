@@ -1048,6 +1048,13 @@ struct drm_connector {
 	struct drm_property *hdcp_content_type_property;
 
 	/**
+	 * @hdcp_topology_property: DRM BLOB property for hdcp downstream
+	 * topology information.
+	 */
+	struct drm_property *hdcp_topology_property;
+	struct drm_property_blob *hdcp_topology_blob_ptr;
+
+	/**
 	 * @path_blob_ptr:
 	 *
 	 * DRM blob property data for the DP MST path property. This should only
@@ -1324,6 +1331,11 @@ int drm_connector_attach_content_protection_property(
 		struct drm_connector *connector);
 int drm_connector_attach_hdcp_content_type_property(
 		struct drm_connector *connector);
+int drm_connector_attach_hdcp_topology_property(
+		struct drm_connector *connector);
+int drm_connector_update_hdcp_topology_property(
+		struct drm_connector *connector,
+		const struct hdcp_topology_info *info);
 int drm_mode_create_aspect_ratio_property(struct drm_device *dev);
 int drm_mode_create_colorspace_property(struct drm_connector *connector);
 int drm_mode_create_content_type_property(struct drm_device *dev);
