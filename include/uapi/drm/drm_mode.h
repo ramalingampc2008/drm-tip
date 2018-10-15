@@ -223,6 +223,9 @@ struct hdcp_topology_info {
 	/* Version of HDCP authenticated (1.4/2.2) */
 	__u32 ver_in_force;
 
+	/* Applicable only for HDCP2.2 */
+	__u8 content_type;
+
 	/* KSV of immediate HDCP Sink. In Little-Endian Format. */
 	char bksv[DRM_MODE_HDCP_KSV_LEN];
 
