@@ -485,6 +485,8 @@ struct intel_hdcp {
 	wait_queue_head_t cp_irq_queue;
 	atomic_t cp_irq_count;
 	int cp_irq_count_cached;
+
+	struct hdcp_topology_info *topology_info;
 };
 
 struct intel_connector {
