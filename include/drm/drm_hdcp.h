@@ -291,5 +291,5 @@ struct drm_connector;
 bool drm_hdcp_check_ksvs_revoked(struct drm_device *dev,
 				 u8 *ksvs, u32 ksv_count);
 int drm_connector_attach_content_protection_property(
-		struct drm_connector *connector);
+		struct drm_connector *connector, bool hdcp_content_type);
 #endif
