@@ -5390,7 +5390,11 @@ int intel_dp_hdcp_write_an_aksv(struct intel_digital_port *intel_dig_port,
 	}
 
 	reply = (rxbuf[0] >> 4) & DP_AUX_NATIVE_REPLY_MASK;
-	return reply == DP_AUX_NATIVE_REPLY_ACK ? 0 : -EIO;
+	ret = reply == DP_AUX_NATIVE_REPLY_ACK ? 0 : -EIO;
+	if (ret)
+		DRM_DEBUG_KMS("Aksv write: DP_AUX_NATIVE_REPLY_ACK missing\n");
+
+	return ret;
 }
 
 static int intel_dp_hdcp_read_bksv(struct intel_digital_port *intel_dig_port,
