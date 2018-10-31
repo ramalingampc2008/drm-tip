@@ -15,6 +15,7 @@
 #include "i915_reg.h"
 
 #define KEY_LOAD_TRIES	5
+#define TIME_FOR_ENCRYPT_STATUS_CHANGE	50
 
 static
 bool intel_hdcp_is_ksv_valid(u8 *ksv)
@@ -636,7 +637,8 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 
 	/* Wait for encryption confirmation */
 	if (intel_wait_for_register(dev_priv, PORT_HDCP_STATUS(port),
-				    HDCP_STATUS_ENC, HDCP_STATUS_ENC, 20)) {
+				    HDCP_STATUS_ENC, HDCP_STATUS_ENC,
+				    TIME_FOR_ENCRYPT_STATUS_CHANGE)) {
 		DRM_ERROR("Timed out waiting for encryption\n");
 		return -ETIMEDOUT;
 	}
@@ -666,7 +668,7 @@ static int _intel_hdcp_disable(struct intel_connector *connector)
 
 	I915_WRITE(PORT_HDCP_CONF(port), 0);
 	if (intel_wait_for_register(dev_priv, PORT_HDCP_STATUS(port), ~0, 0,
-				    20)) {
+				    TIME_FOR_ENCRYPT_STATUS_CHANGE)) {
 		DRM_ERROR("Failed to disable HDCP, timeout clearing status\n");
 		return -ETIMEDOUT;
 	}
