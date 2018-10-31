@@ -5067,6 +5067,9 @@ static int i915_hdcp_sink_capability_show(struct seq_file *m, void *data)
 {
 	struct drm_connector *connector = m->private;
 	struct intel_connector *intel_connector = to_intel_connector(connector);
+	struct intel_digital_port *intel_dig_port =
+					conn_to_dig_port(intel_connector);
+	bool is_hdcp14;
 
 	if (connector->status != connector_status_connected)
 		return -ENODEV;
@@ -5077,8 +5080,11 @@ static int i915_hdcp_sink_capability_show(struct seq_file *m, void *data)
 
 	seq_printf(m, "%s:%d HDCP version: ", connector->name,
 		   connector->base.id);
-	seq_printf(m, "%s ", !intel_hdcp_capable(intel_connector) ?
-		   "None" : "HDCP1.4");
+
+	/* Excluding the Lspcon for Testing Purpose */
+	is_hdcp14 = intel_hdcp_capable(intel_connector) &&
+		    !intel_dig_port->lspcon.active;
+	seq_printf(m, "%s ", !is_hdcp14 ? "None" : "HDCP1.4");
 	seq_puts(m, "\n");
 
 	return 0;
