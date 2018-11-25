@@ -24,6 +24,8 @@
 #ifndef _I915_COMPONENT_H_
 #define _I915_COMPONENT_H_
 
+#include <drm/i915_mei_hdcp_interface.h>
+
 #include "drm_audio_component.h"
 
 /* MAX_PORT is the number of port
@@ -50,8 +52,13 @@ struct i915_audio_component {
  * struct i915_component_master - Used for communication between i915
  *				  and any other drivers for the services
  *				  of different feature.
+ * @mei_dev: device that provide the HDCP2.2 service from MEI Bus.
+ * @hdcp_ops: Ops implemented by mei_hdcp driver, used by i915 driver.
  */
 struct i915_component_master {
+	struct device *mei_dev;
+	const struct i915_hdcp_component_ops *hdcp_ops;
+
 	/*
 	 * Add here the interface details between I915 and interested modules.
 	 */
