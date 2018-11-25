@@ -24,10 +24,13 @@
 #ifndef _I915_COMPONENT_H_
 #define _I915_COMPONENT_H_
 
+#include <linux/device.h>
+
 #include "drm_audio_component.h"
 
 enum i915_component_type {
 	I915_COMPONENT_AUDIO = 1,
+	I915_COMPONENT_HDCP,
 };
 
 /* MAX_PORT is the number of port
