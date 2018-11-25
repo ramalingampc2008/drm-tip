@@ -29,6 +29,7 @@
 #include <linux/i2c.h>
 #include <linux/hdmi.h>
 #include <linux/sched/clock.h>
+#include <linux/mei_hdcp.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 #include <drm/drm_crtc.h>
@@ -379,6 +380,9 @@ struct intel_hdcp_shim {
 	/* Detects panel's hdcp capability. This is optional for HDMI. */
 	int (*hdcp_capable)(struct intel_digital_port *intel_dig_port,
 			    bool *hdcp_capable);
+
+	/* Detects the HDCP protocol(DP/HDMI) required on the port */
+	enum mei_hdcp_wired_protocol (*hdcp_protocol)(void);
 };
 
 struct intel_hdcp {
@@ -399,6 +403,9 @@ struct intel_hdcp {
 	 * content can flow only through a link protected by HDCP2.2.
 	 */
 	u8 content_type;
+
+	/* mei interface related information */
+	struct mei_hdcp_data mei_data;
 };
 
 struct intel_connector {
