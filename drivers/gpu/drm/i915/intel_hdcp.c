@@ -832,14 +832,37 @@ bool is_hdcp_supported(struct drm_i915_private *dev_priv, enum port port)
 	return INTEL_GEN(dev_priv) >= 9 && port < PORT_E;
 }
 
+bool is_hdcp2_supported(struct drm_i915_private *dev_priv)
+{
+	if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP))
+		return false;
+
+	return (INTEL_GEN(dev_priv) >= 10 || IS_GEMINILAKE(dev_priv) ||
+		IS_KABYLAKE(dev_priv));
+}
+
+static void intel_hdcp2_init(struct intel_connector *connector)
+{
+	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+
+	WARN_ON(!is_hdcp2_supported(dev_priv));
+
+	/* TODO: MEI interface needs to be initialized here */
+	hdcp->hdcp2_supported = true;
+}
+
 int intel_hdcp_init(struct intel_connector *connector,
-		    const struct intel_hdcp_shim *shim)
+		    const struct intel_hdcp_shim *shim,
+		    bool hdcp2_supported)
 {
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	int ret;
 
-	ret = drm_connector_attach_content_protection_property(
-			&connector->base);
+	if (!shim)
+		return -EINVAL;
+
+	ret = drm_connector_attach_content_protection_property(&connector->base);
 	if (ret)
 		return ret;
 
@@ -847,6 +870,10 @@ int intel_hdcp_init(struct intel_connector *connector,
 	mutex_init(&hdcp->mutex);
 	INIT_DELAYED_WORK(&hdcp->check_work, intel_hdcp_check_work);
 	INIT_WORK(&hdcp->prop_work, intel_hdcp_prop_work);
+
+	if (hdcp2_supported)
+		intel_hdcp2_init(connector);
+
 	return 0;
 }
 
