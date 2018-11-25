@@ -1755,6 +1755,8 @@ void i915_driver_unload(struct drm_device *dev)
 
 	disable_rpm_wakeref_asserts(dev_priv);
 
+	intel_hdcp_exit(dev_priv);
+
 	i915_driver_unregister(dev_priv);
 
 	if (i915_gem_suspend(dev_priv))

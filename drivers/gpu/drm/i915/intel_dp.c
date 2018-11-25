@@ -6675,7 +6675,8 @@ intel_dp_init_connector(struct intel_digital_port *intel_dig_port,
 	intel_dp_add_properties(intel_dp, connector);
 
 	if (is_hdcp_supported(dev_priv, port) && !intel_dp_is_edp(intel_dp)) {
-		int ret = intel_hdcp_init(intel_connector, &intel_dp_hdcp_shim);
+		int ret = intel_hdcp_init(intel_connector, &intel_dp_hdcp_shim,
+					  false);
 		if (ret)
 			DRM_DEBUG_KMS("HDCP init failed, skipping.\n");
 	}
