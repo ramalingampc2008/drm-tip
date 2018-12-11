@@ -17,6 +17,7 @@
 #include <linux/string.h>
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
+#include <linux/task_work.h>
 #include "base.h"
 #include "power/power.h"
 
@@ -174,22 +175,44 @@ static const struct kset_uevent_ops bus_uevent_ops = {
 
 static struct kset *bus_kset;
 
+struct unbind_work {
+	struct callback_head twork;
+	struct device *dev;
+};
+
+void unbind_work_fn(struct callback_head *work)
+{
+	struct unbind_work *unbind_work =
+		container_of(work, struct unbind_work, twork);
+
+	device_release_driver_internal(unbind_work->dev, NULL,
+				       unbind_work->dev->parent);
+	put_device(unbind_work->dev);
+	kfree(unbind_work);
+}
+
 /* Manually detach a device from its associated driver. */
 static ssize_t unbind_store(struct device_driver *drv, const char *buf,
 			    size_t count)
 {
 	struct bus_type *bus = bus_get(drv->bus);
+	struct unbind_work *unbind_work;
 	struct device *dev;
 	int err = -ENODEV;
 
 	dev = bus_find_device_by_name(bus, NULL, buf);
 	if (dev && dev->driver == drv) {
-		if (dev->parent && dev->bus->need_parent_lock)
-			device_lock(dev->parent);
-		device_release_driver(dev);
-		if (dev->parent && dev->bus->need_parent_lock)
-			device_unlock(dev->parent);
-		err = count;
+		unbind_work = kmalloc(sizeof(*unbind_work), GFP_KERNEL);
+		if (unbind_work) {
+			unbind_work->dev = dev;
+			get_device(dev);
+			init_task_work(&unbind_work->twork, unbind_work_fn);
+			task_work_add(current, &unbind_work->twork, true);
+
+			err = count;
+		} else {
+			err = -ENOMEM;
+		}
 	}
 	put_device(dev);
 	bus_put(bus);
