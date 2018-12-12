@@ -250,4 +250,22 @@ struct hdcp2_dp_errata_stream_type {
 #define HDCP_2_2_HDMI_RXSTATUS_READY(x)		((x) & BIT(2))
 #define HDCP_2_2_HDMI_RXSTATUS_REAUTH_REQ(x)	((x) & BIT(3))
 
+/*
+ * Library functions for endianness are aligned for 16/32/64 bits.
+ * But hdcp sequence numbers are 24bits(big endian). So for their conversion
+ * from and to u32 below functions are developed.
+ */
+static inline void
+drm_hdcp2_seq_num_to_u32(u32 *val, u8 seq_num[HDCP_2_2_SEQ_NUM_LEN])
+{
+	*val = seq_num[2] | seq_num[1] << 8 | seq_num[0] << 16;
+}
+
+static inline void drm_hdcp2_u32_to_seq_num(u8 *seq_num, u32 val)
+{
+	seq_num[0] = (val & (0xff << 16)) >> 16;
+	seq_num[1] = (val & (0xff << 8)) >> 8;
+	seq_num[2] = val & 0xff;
+}
+
 #endif
