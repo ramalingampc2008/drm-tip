@@ -399,6 +399,9 @@ struct intel_hdcp {
 	struct delayed_work check_work;
 	struct work_struct prop_work;
 
+	/* HDCP1.4 Encryption status */
+	bool hdcp_encrypted;
+
 	/* HDCP2.2 related definitions */
 	/* Flag indicates whether this connector supports HDCP2.2 or not. */
 	bool hdcp2_supported;
@@ -2073,10 +2076,10 @@ int intel_hdcp_init(struct intel_connector *connector,
 		    bool hdcp2_supported);
 int intel_hdcp_enable(struct intel_connector *connector);
 int intel_hdcp_disable(struct intel_connector *connector);
-int intel_hdcp_check_link(struct intel_connector *connector);
 bool is_hdcp_supported(struct drm_i915_private *dev_priv, enum port port);
 bool intel_hdcp_capable(struct intel_connector *connector);
 bool is_hdcp2_supported(struct drm_i915_private *dev_priv);
+void intel_hdcp_handle_cp_irq(struct intel_connector *connector);
 
 /* intel_psr.c */
 #define CAN_PSR(dev_priv) (HAS_PSR(dev_priv) && dev_priv->psr.sink_support)
