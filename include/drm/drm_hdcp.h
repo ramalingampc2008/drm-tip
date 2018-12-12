@@ -11,6 +11,14 @@
 
 /* Period of hdcp checks (to ensure we're still authenticated) */
 #define DRM_HDCP_CHECK_PERIOD_MS		(128 * 16)
+#define DRM_HDCP2_CHECK_PERIOD_MS		500
+
+enum check_link_response {
+	DRM_HDCP_LINK_PROTECTED	= 0,
+	DRM_HDCP_TOPOLOGY_CHANGE,
+	DRM_HDCP_LINK_INTEGRITY_FAILURE,
+	DRM_HDCP_REAUTH_REQUEST
+};
 
 /* Shared lengths/masks between HDMI/DVI/DisplayPort */
 #define DRM_HDCP_AN_LEN				8
