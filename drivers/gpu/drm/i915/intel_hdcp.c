@@ -1581,8 +1581,10 @@ static void intel_hdcp_check_work(struct work_struct *work)
 
 static int i915_hdcp_component_match(struct device *dev, void *data)
 {
-	if (!dev && !dev->driver)
+	if (!dev && !dev->driver) {
+		DRM_DEBUG_KMS("device without driver\n");
 		return false;
+	}
 
 	return !strcmp(dev->driver->name, "mei_hdcp");
 }
