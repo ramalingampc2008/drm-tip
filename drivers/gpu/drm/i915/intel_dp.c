@@ -5619,6 +5619,24 @@ void intel_dp_encoder_suspend(struct intel_encoder *intel_encoder)
 		edp_panel_vdd_off_sync(intel_dp);
 }
 
+static void intel_dp_hdcp_wait_for_cp_irq(struct intel_hdcp *hdcp,
+					  int timeout)
+{
+	long ret;
+
+	/* Reinit */
+	atomic_set(&hdcp->cp_irq_recved, 0);
+
+#define C (atomic_read(&hdcp->cp_irq_recved) > 0)
+	ret = wait_event_interruptible_timeout(hdcp->cp_irq_queue, C,
+					       msecs_to_jiffies(timeout));
+
+	if (ret > 0)
+		atomic_set(&hdcp->cp_irq_recved, 0);
+	else if (!ret)
+		DRM_DEBUG_KMS("Timedout at waiting for CP_IRQ\n");
+}
+
 static
 int intel_dp_hdcp_write_an_aksv(struct intel_digital_port *intel_dig_port,
 				u8 *an)
@@ -5963,14 +5981,13 @@ intel_dp_hdcp2_wait_for_msg(struct intel_digital_port *intel_dig_port,
 		mdelay(timeout);
 		ret = 0;
 	} else {
-		/* TODO: In case if you need to wait on CP_IRQ, do it here */
-		ret = __wait_for(ret =
-				 hdcp2_detect_msg_availability(intel_dig_port,
-							       msg_id,
-							       &msg_ready),
-				 !ret && msg_ready, timeout * 1000,
-				 1000, 5 * 1000);
-
+		/*
+		 * Ignoring the return of the intel_dp_hdcp_wait_for_cp_irq,
+		 * Just to detect the msg availability before failing it.
+		 */
+		intel_dp_hdcp_wait_for_cp_irq(hdcp, timeout);
+		ret = hdcp2_detect_msg_availability(intel_dig_port,
+						    msg_id, &msg_ready);
 		if (!msg_ready)
 			ret = -ETIMEDOUT;
 	}

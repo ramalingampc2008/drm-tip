@@ -1805,6 +1805,9 @@ int intel_hdcp_init(struct intel_connector *connector,
 	if (hdcp2_supported)
 		intel_hdcp2_init(connector);
 
+	atomic_set(&hdcp->cp_irq_recved, 0);
+	init_waitqueue_head(&hdcp->cp_irq_queue);
+
 	return 0;
 }
 
@@ -1907,6 +1910,9 @@ void intel_hdcp_handle_cp_irq(struct intel_connector *connector)
 
 	if (!hdcp->shim)
 		return;
+
+	atomic_set(&connector->hdcp.cp_irq_recved, 1);
+	wake_up_all(&connector->hdcp.cp_irq_queue);
 
 	/*
 	 * CP_IRQ could be triggered due to 1. HDCP2.2 auth msgs availability,
