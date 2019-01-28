@@ -21,6 +21,7 @@ struct component;
 struct component_match_array {
 	void *data;
 	int (*compare)(struct device *, void *);
+	int (*compare_typed)(struct device *, int, void *);
 	void (*release)(struct device *, void *);
 	struct component *component;
 	bool duplicate;
@@ -48,6 +49,7 @@ struct component {
 	bool bound;
 
 	const struct component_ops *ops;
+	int subcomponent;
 	struct device *dev;
 };
 
@@ -132,7 +134,7 @@ static struct master *__master_find(struct device *dev,
 }
 
 static struct component *find_component(struct master *master,
-	int (*compare)(struct device *, void *), void *compare_data)
+	struct component_match_array *mc)
 {
 	struct component *c;
 
@@ -140,8 +142,13 @@ static struct component *find_component(struct master *master,
 		if (c->master && c->master != master)
 			continue;
 
-		if (compare(c->dev, compare_data))
+		if (mc->compare_typed) {
+			if (mc->compare_typed(c->dev, c->subcomponent,
+					      mc->data))
+				return c;
+		} else if (mc->compare(c->dev, mc->data)) {
 			return c;
+		}
 	}
 
 	return NULL;
@@ -166,7 +173,7 @@ static int find_components(struct master *master)
 		if (match->compare[i].component)
 			continue;
 
-		c = find_component(master, mc->compare, mc->data);
+		c = find_component(master, mc);
 		if (!c) {
 			ret = -ENXIO;
 			break;
@@ -301,15 +308,12 @@ static int component_match_realloc(struct device *dev,
 	return 0;
 }
 
-/*
- * Add a component to be matched, with a release function.
- *
- * The match array is first created or extended if necessary.
- */
-void component_match_add_release(struct device *master,
+static void __component_match_add(struct device *master,
 	struct component_match **matchptr,
 	void (*release)(struct device *, void *),
-	int (*compare)(struct device *, void *), void *compare_data)
+	int (*compare)(struct device *, void *),
+	int (*compare_typed)(struct device *, int, void *),
+	void *compare_data)
 {
 	struct component_match *match = *matchptr;
 
@@ -341,12 +345,36 @@ void component_match_add_release(struct device *master,
 	}
 
 	match->compare[match->num].compare = compare;
+	match->compare[match->num].compare_typed = compare_typed;
 	match->compare[match->num].release = release;
 	match->compare[match->num].data = compare_data;
 	match->compare[match->num].component = NULL;
 	match->num++;
 }
+
+/*
+ * Add a component to be matched, with a release function.
+ *
+ * The match array is first created or extended if necessary.
+ */
+void component_match_add_release(struct device *master,
+	struct component_match **matchptr,
+	void (*release)(struct device *, void *),
+	int (*compare)(struct device *, void *), void *compare_data)
+{
+	__component_match_add(master, matchptr, release, compare, NULL,
+			      compare_data);
+}
 EXPORT_SYMBOL(component_match_add_release);
+
+void component_match_add_typed(struct device *master,
+	struct component_match **matchptr,
+	int (*compare_typed)(struct device *, int, void *), void *compare_data)
+{
+	__component_match_add(master, matchptr, NULL, NULL, compare_typed,
+			      compare_data);
+}
+EXPORT_SYMBOL(component_match_add_typed);
 
 static void free_master(struct master *master)
 {
@@ -537,7 +565,8 @@ int component_bind_all(struct device *master_dev, void *data)
 }
 EXPORT_SYMBOL_GPL(component_bind_all);
 
-int component_add(struct device *dev, const struct component_ops *ops)
+static int __component_add(struct device *dev, const struct component_ops *ops,
+	int subcomponent)
 {
 	struct component *component;
 	int ret;
@@ -548,6 +577,7 @@ int component_add(struct device *dev, const struct component_ops *ops)
 
 	component->ops = ops;
 	component->dev = dev;
+	component->subcomponent = subcomponent;
 
 	dev_dbg(dev, "adding component (ops %ps)\n", ops);
 
@@ -565,6 +595,21 @@ int component_add(struct device *dev, const struct component_ops *ops)
 	mutex_unlock(&component_mutex);
 
 	return ret < 0 ? ret : 0;
+}
+
+int component_add_typed(struct device *dev, const struct component_ops *ops,
+	int subcomponent)
+{
+	if (WARN_ON(subcomponent == 0))
+		return -EINVAL;
+
+	return __component_add(dev, ops, subcomponent);
+}
+EXPORT_SYMBOL_GPL(component_add_typed);
+
+int component_add(struct device *dev, const struct component_ops *ops)
+{
+	return __component_add(dev, ops, 0);
 }
 EXPORT_SYMBOL_GPL(component_add);
 

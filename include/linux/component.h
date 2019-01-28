@@ -14,6 +14,8 @@ struct component_ops {
 };
 
 int component_add(struct device *, const struct component_ops *);
+int component_add_typed(struct device *dev, const struct component_ops *ops,
+	int subcomponent);
 void component_del(struct device *, const struct component_ops *);
 
 int component_bind_all(struct device *master, void *master_data);
@@ -37,6 +39,9 @@ void component_match_add_release(struct device *master,
 	struct component_match **matchptr,
 	void (*release)(struct device *, void *),
 	int (*compare)(struct device *, void *), void *compare_data);
+void component_match_add_typed(struct device *master,
+	struct component_match **matchptr,
+	int (*compare_typed)(struct device *, int, void *), void *compare_data);
 
 static inline void component_match_add(struct device *master,
 	struct component_match **matchptr,
