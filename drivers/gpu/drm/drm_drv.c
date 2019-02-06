@@ -457,6 +457,20 @@ static void drm_fs_inode_free(struct inode *inode)
 }
 
 /**
+ * DOC: component helper usage recommendations
+ *
+ * DRM drivers that drive hardware where a logical device consists of a pile of
+ * independent hardware blocks are recommended to use the :ref:`component helper
+ * library<component>`. The entire device initialization procedure should be run
+ * from the &component_master_ops.master_bind callback, starting with
+ * drm_dev_init(), then binding all components with component_bind_all() and
+ * finishing with drm_dev_register(). For consistency and easier sharing of
+ * components across drivers the opaque pointer passed to all components through
+ * component_bind_all() should point at &struct drm_device of the device
+ * instance, not some driver specific private structure.
+ */
+
+/**
  * drm_dev_init - Initialise new DRM device
  * @dev: DRM device
  * @driver: DRM driver
