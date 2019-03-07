@@ -2054,6 +2054,12 @@ struct drm_i915_private {
 	/* Mutex to protect the above hdcp component related values. */
 	struct mutex hdcp_comp_mutex;
 
+	unsigned int revocated_ksv_cnt;
+	u8 *revocated_ksv_list;
+
+	/* Mutex to protect the data about revocated ksvs */
+	struct mutex srm_mutex;
+
 	/*
 	 * NOTE: This is the dri1/ums dungeon, don't add stuff here. Your patch
 	 * will be rejected. Instead look for a better place.

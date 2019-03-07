@@ -273,6 +273,62 @@ u32 intel_hdcp_get_repeater_ctl(struct intel_digital_port *intel_dig_port)
 	return -EINVAL;
 }
 
+static inline void intel_hdcp_print_ksv(u8 *ksv)
+{
+	DRM_DEBUG_KMS("\t%#04x, %#04x, %#04x, %#04x, %#04x\n", *ksv,
+		      *(ksv + 1), *(ksv + 2), *(ksv + 3), *(ksv + 4));
+}
+
+static inline
+struct intel_connector *intel_hdcp_to_connector(struct intel_hdcp *hdcp)
+{
+	return container_of(hdcp, struct intel_connector, hdcp);
+}
+
+/* Check if any of the KSV is revocated by DCP LLC through SRM table */
+static inline
+bool intel_hdcp_ksvs_revocated(struct intel_hdcp *hdcp, u8 *ksvs, u32 ksv_count)
+{
+	struct intel_connector *connector = intel_hdcp_to_connector(hdcp);
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct drm_i915_private *dev_priv =
+				intel_dig_port->base.base.dev->dev_private;
+	u32 rev_ksv_cnt, cnt, i, j;
+	u8 *rev_ksv_list;
+
+	mutex_lock(&dev_priv->srm_mutex);
+	rev_ksv_cnt = dev_priv->revocated_ksv_cnt;
+	rev_ksv_list = dev_priv->revocated_ksv_list;
+
+	/* If the Revocated ksv list is empty */
+	if (!rev_ksv_cnt || !rev_ksv_list) {
+		mutex_unlock(&dev_priv->srm_mutex);
+		return false;
+	}
+
+	for  (cnt = 0; cnt < ksv_count; cnt++) {
+		rev_ksv_list = dev_priv->revocated_ksv_list;
+		for (i = 0; i < rev_ksv_cnt; i++) {
+			for (j = 0; j < DRM_HDCP_KSV_LEN; j++)
+				if (*(ksvs + j) != *(rev_ksv_list + j)) {
+					break;
+				} else if (j == (DRM_HDCP_KSV_LEN - 1)) {
+					DRM_DEBUG_KMS("Revocated KSV is ");
+					intel_hdcp_print_ksv(ksvs);
+					mutex_unlock(&dev_priv->srm_mutex);
+					return true;
+				}
+			/* Move the offset to next KSV in the revocated list */
+			rev_ksv_list += DRM_HDCP_KSV_LEN;
+		}
+
+		/* Iterate to next ksv_offset */
+		ksvs += DRM_HDCP_KSV_LEN;
+	}
+	mutex_unlock(&dev_priv->srm_mutex);
+	return false;
+}
+
 static
 int intel_hdcp_validate_v_prime(struct intel_digital_port *intel_dig_port,
 				const struct intel_hdcp_shim *shim,
@@ -490,9 +546,10 @@ int intel_hdcp_validate_v_prime(struct intel_digital_port *intel_dig_port,
 
 /* Implements Part 2 of the HDCP authorization procedure */
 static
-int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
-			       const struct intel_hdcp_shim *shim)
+int intel_hdcp_auth_downstream(struct intel_hdcp *hdcp,
+			       struct intel_digital_port *intel_dig_port)
 {
+	const struct intel_hdcp_shim *shim = hdcp->shim;
 	u8 bstatus[2], num_downstream, *ksv_fifo;
 	int ret, i, tries = 3;
 
@@ -531,6 +588,11 @@ int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
 	if (ret)
 		goto err;
 
+	if (intel_hdcp_ksvs_revocated(hdcp, ksv_fifo, num_downstream)) {
+		DRM_ERROR("Revocated Ksv(s) in ksv_fifo\n");
+		return -EPERM;
+	}
+
 	/*
 	 * When V prime mismatches, DP Spec mandates re-read of
 	 * V prime atleast twice.
@@ -557,9 +619,11 @@ err:
 }
 
 /* Implements Part 1 of the HDCP authorization procedure */
-static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
-			   const struct intel_hdcp_shim *shim)
+static int intel_hdcp_auth(struct intel_connector *connector)
 {
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+	const struct intel_hdcp_shim *shim = hdcp->shim;
 	struct drm_i915_private *dev_priv;
 	enum port port;
 	unsigned long r0_prime_gen_start;
@@ -624,6 +688,11 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	ret = intel_hdcp_read_valid_bksv(intel_dig_port, shim, bksv.shim);
 	if (ret < 0)
 		return ret;
+
+	if (intel_hdcp_ksvs_revocated(hdcp, bksv.shim, 1)) {
+		DRM_ERROR("BKSV is revocated\n");
+		return -EPERM;
+	}
 
 	I915_WRITE(PORT_HDCP_BKSVLO(port), bksv.reg[0]);
 	I915_WRITE(PORT_HDCP_BKSVHI(port), bksv.reg[1]);
@@ -698,7 +767,7 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	 */
 
 	if (repeater_present)
-		return intel_hdcp_auth_downstream(intel_dig_port, shim);
+		return intel_hdcp_auth_downstream(hdcp, intel_dig_port);
 
 	DRM_DEBUG_KMS("HDCP is enabled (no repeater present)\n");
 	return 0;
@@ -735,7 +804,6 @@ static int _intel_hdcp_disable(struct intel_connector *connector)
 
 static int _intel_hdcp_enable(struct intel_connector *connector)
 {
-	struct intel_hdcp *hdcp = &connector->hdcp;
 	struct drm_i915_private *dev_priv = connector->base.dev->dev_private;
 	int i, ret, tries = 3;
 
@@ -760,9 +828,9 @@ static int _intel_hdcp_enable(struct intel_connector *connector)
 
 	/* Incase of authentication failures, HDCP spec expects reauth. */
 	for (i = 0; i < tries; i++) {
-		ret = intel_hdcp_auth(conn_to_dig_port(connector), hdcp->shim);
+		ret = intel_hdcp_auth(connector);
 		if (!ret) {
-			hdcp->hdcp_encrypted = true;
+			connector->hdcp.hdcp_encrypted = true;
 			return 0;
 		}
 
@@ -774,12 +842,6 @@ static int _intel_hdcp_enable(struct intel_connector *connector)
 
 	DRM_DEBUG_KMS("HDCP authentication failed (%d tries/%d)\n", tries, ret);
 	return ret;
-}
-
-static inline
-struct intel_connector *intel_hdcp_to_connector(struct intel_hdcp *hdcp)
-{
-	return container_of(hdcp, struct intel_connector, hdcp);
 }
 
 /* Implements Part 3 of the HDCP authorization procedure */
@@ -1193,6 +1255,12 @@ static int hdcp2_authentication_key_exchange(struct intel_connector *connector)
 
 	hdcp->is_repeater = HDCP_2_2_RX_REPEATER(msgs.send_cert.rx_caps[2]);
 
+	if (intel_hdcp_ksvs_revocated(hdcp,
+				      msgs.send_cert.cert_rx.receiver_id, 1)) {
+		DRM_ERROR("Receiver ID is revocated\n");
+		return -EPERM;
+	}
+
 	/*
 	 * Here msgs.no_stored_km will hold msgs corresponding to the km
 	 * stored also.
@@ -1351,7 +1419,7 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 	} msgs;
 	const struct intel_hdcp_shim *shim = hdcp->shim;
 	u8 *rx_info;
-	u32 seq_num_v;
+	u32 seq_num_v, device_cnt;
 	int ret;
 
 	ret = shim->read_2_2_msg(intel_dig_port, HDCP_2_2_REP_SEND_RECVID_LIST,
@@ -1374,6 +1442,14 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 		/* Roll over of the seq_num_v from repeater. Reauthenticate. */
 		DRM_DEBUG_KMS("Seq_num_v roll over.\n");
 		return -EINVAL;
+	}
+
+	device_cnt = HDCP_2_2_DEV_COUNT_HI(rx_info[0]) << 4 ||
+			HDCP_2_2_DEV_COUNT_LO(rx_info[1]);
+	if (intel_hdcp_ksvs_revocated(hdcp, msgs.recvid_list.receiver_ids,
+				      device_cnt)) {
+		DRM_ERROR("Revoked receiver ID(s) is in list\n");
+		return -EPERM;
 	}
 
 	ret = hdcp2_verify_rep_topology_prepare_ack(connector,
@@ -1816,6 +1892,208 @@ int intel_hdcp_init(struct intel_connector *connector,
 	init_waitqueue_head(&hdcp->cp_irq_queue);
 
 	return 0;
+}
+
+static u32 intel_hdcp_get_revocated_ksv_count(u8 *buf, u32 vrls_length)
+{
+	u32 parsed_bytes = 0, ksv_count = 0, vrl_ksv_cnt, vrl_sz;
+
+	do {
+		vrl_ksv_cnt = *buf;
+		ksv_count += vrl_ksv_cnt;
+
+		vrl_sz = (vrl_ksv_cnt * DRM_HDCP_KSV_LEN) + 1;
+		buf += vrl_sz;
+		parsed_bytes += vrl_sz;
+	} while (parsed_bytes < vrls_length);
+
+	return ksv_count;
+}
+
+static u32 intel_hdcp_get_revocated_ksvs(u8 *ksv_list, const u8 *buf,
+					 u32 vrls_length)
+{
+	u32 parsed_bytes = 0, ksv_count = 0;
+	u32 vrl_ksv_cnt, vrl_ksv_sz, vrl_idx = 0;
+
+	do {
+		vrl_ksv_cnt = *buf;
+		vrl_ksv_sz = vrl_ksv_cnt * DRM_HDCP_KSV_LEN;
+
+		buf++;
+
+		DRM_DEBUG_KMS("vrl: %d, Revoked KSVs: %d\n", vrl_idx++,
+			      vrl_ksv_cnt);
+		memcpy(ksv_list, buf, vrl_ksv_sz);
+
+		ksv_count += vrl_ksv_cnt;
+		ksv_list += vrl_ksv_sz;
+		buf += vrl_ksv_sz;
+
+		parsed_bytes += (vrl_ksv_sz + 1);
+	} while (parsed_bytes < vrls_length);
+
+	return ksv_count;
+}
+
+static int intel_hdcp_parse_srm(struct drm_i915_private *dev_priv, char *buf,
+				size_t count)
+{
+	struct hdcp_srm_header *header;
+	u32 vrl_length, ksv_count;
+
+	if (count < (sizeof(struct hdcp_srm_header) +
+	    DRM_HDCP_1_4_VRL_LENGTH_SIZE + DRM_HDCP_1_4_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length\n");
+		return -EINVAL;
+	}
+
+	header = (struct hdcp_srm_header *)buf;
+	mutex_lock(&dev_priv->srm_mutex);
+	DRM_DEBUG_KMS("SRM ID: 0x%x, SRM Ver: 0x%x, SRM Gen No: 0x%x\n",
+		      header->spec_indicator.srm_id,
+		      __swab16(header->srm_version), header->srm_gen_no);
+
+	WARN_ON(header->spec_indicator.reserved_hi ||
+		header->spec_indicator.reserved_lo);
+
+	if (header->spec_indicator.srm_id != DRM_HDCP_1_4_SRM_ID) {
+		DRM_ERROR("Invalid srm_id\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	buf = buf + sizeof(*header);
+	vrl_length = (*buf << 16 | *(buf + 1) << 8 | *(buf + 2));
+	if (count < (sizeof(struct hdcp_srm_header) + vrl_length) ||
+	    vrl_length < (DRM_HDCP_1_4_VRL_LENGTH_SIZE +
+			  DRM_HDCP_1_4_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length or vrl length\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	/* Length of the all vrls combined */
+	vrl_length -= (DRM_HDCP_1_4_VRL_LENGTH_SIZE +
+		       DRM_HDCP_1_4_DCP_SIG_SIZE);
+
+	if (!vrl_length) {
+		DRM_DEBUG_KMS("No vrl found\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	buf += DRM_HDCP_1_4_VRL_LENGTH_SIZE;
+	ksv_count = intel_hdcp_get_revocated_ksv_count(buf, vrl_length);
+	if (!ksv_count) {
+		DRM_DEBUG_KMS("Revocated KSV count is 0\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return count;
+	}
+
+	kfree(dev_priv->revocated_ksv_list);
+	dev_priv->revocated_ksv_list = kzalloc(ksv_count * DRM_HDCP_KSV_LEN,
+					       GFP_KERNEL);
+	if (!dev_priv->revocated_ksv_list) {
+		DRM_ERROR("Out of Memory\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -ENOMEM;
+	}
+
+	if (intel_hdcp_get_revocated_ksvs(dev_priv->revocated_ksv_list,
+					  buf, vrl_length) != ksv_count) {
+		dev_priv->revocated_ksv_cnt = 0;
+		kfree(dev_priv->revocated_ksv_list);
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	dev_priv->revocated_ksv_cnt = ksv_count;
+	mutex_unlock(&dev_priv->srm_mutex);
+	return count;
+}
+
+static int intel_hdcp2_parse_srm(struct drm_i915_private *dev_priv, char *buf,
+				 size_t count)
+{
+	struct hdcp2_srm_header *header;
+	u32 vrl_length, ksv_count, ksv_sz;
+
+	mutex_lock(&dev_priv->srm_mutex);
+	if (count < (sizeof(struct hdcp2_srm_header) +
+	    DRM_HDCP_2_VRL_LENGTH_SIZE + DRM_HDCP_2_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	header = (struct hdcp2_srm_header *)buf;
+	DRM_DEBUG_KMS("SRM ID: 0x%x, SRM Ver: 0x%x, SRM Gen No: 0x%x\n",
+		      header->spec_indicator.srm_id,
+		      __swab16(header->srm_version), header->srm_gen_no);
+
+	WARN_ON(header->spec_indicator.reserved);
+	buf = buf + sizeof(*header);
+	vrl_length = (*buf << 16 | *(buf + 1) << 8 | *(buf + 2));
+
+	if (count < (sizeof(struct hdcp2_srm_header) + vrl_length) ||
+	    vrl_length < (DRM_HDCP_2_VRL_LENGTH_SIZE +
+	    DRM_HDCP_2_DCP_SIG_SIZE)) {
+		DRM_ERROR("Invalid blob length or vrl length\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	/* Length of the all vrls combined */
+	vrl_length -= (DRM_HDCP_2_VRL_LENGTH_SIZE +
+		       DRM_HDCP_2_DCP_SIG_SIZE);
+
+	if (!vrl_length) {
+		DRM_DEBUG_KMS("No vrl found\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -EINVAL;
+	}
+
+	buf += DRM_HDCP_2_VRL_LENGTH_SIZE;
+	ksv_count = (*buf << 2) | DRM_HDCP_2_KSV_COUNT_2_LSBITS(*(buf + 1));
+	if (!ksv_count) {
+		DRM_DEBUG_KMS("Revocated KSV count is 0\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return count;
+	}
+
+	kfree(dev_priv->revocated_ksv_list);
+	dev_priv->revocated_ksv_list = kzalloc(ksv_count * DRM_HDCP_KSV_LEN,
+					       GFP_KERNEL);
+	if (!dev_priv->revocated_ksv_list) {
+		DRM_ERROR("Out of Memory\n");
+		mutex_unlock(&dev_priv->srm_mutex);
+		return -ENOMEM;
+	}
+
+	ksv_sz = ksv_count * DRM_HDCP_KSV_LEN;
+	buf += DRM_HDCP_2_NO_OF_DEV_PLUS_RESERVED_SZ;
+
+	DRM_DEBUG_KMS("Revoked KSVs: %d\n", ksv_count);
+	memcpy(dev_priv->revocated_ksv_list, buf, ksv_sz);
+
+	dev_priv->revocated_ksv_cnt = ksv_count;
+	mutex_unlock(&dev_priv->srm_mutex);
+	return count;
+}
+
+ssize_t intel_hdcp_srm_update(struct drm_i915_private *dev_priv, char *buf,
+			      size_t count)
+{
+	u8 srm_id;
+
+	srm_id = *((u8 *)buf);
+	if (srm_id == 0x80)
+		return (ssize_t)intel_hdcp_parse_srm(dev_priv, buf, count);
+	else if (srm_id == 0x91)
+		return (ssize_t)intel_hdcp2_parse_srm(dev_priv, buf, count);
+
+	return (ssize_t)-EINVAL;
 }
 
 int intel_hdcp_enable(struct intel_connector *connector, u8 content_type)
