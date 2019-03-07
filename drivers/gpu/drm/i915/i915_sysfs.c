@@ -576,6 +576,36 @@ static void i915_setup_error_capture(struct device *kdev) {}
 static void i915_teardown_error_capture(struct device *kdev) {}
 #endif
 
+static ssize_t
+i915_srm_write(struct file *filp, struct kobject *kobj,
+	       struct bin_attribute *attr, char *buf,
+	       loff_t offset, size_t count)
+{
+	struct device *kdev = kobj_to_dev(kobj);
+	struct drm_i915_private *dev_priv = kdev_minor_to_i915(kdev);
+
+	return intel_hdcp_srm_update(dev_priv, buf, count);
+}
+
+static const struct bin_attribute srm_attrs = {
+	.attr = {.name = "hdcp_srm", .mode = S_IWUSR},
+	.read = NULL,
+	.write = i915_srm_write,
+	.mmap = NULL,
+	.private = (void *)0
+};
+
+static void i915_setup_hdcp_srm(struct device *kdev)
+{
+	if (sysfs_create_bin_file(&kdev->kobj, &srm_attrs))
+		DRM_ERROR("error_state sysfs setup failed\n");
+}
+
+static void i915_teardown_hdcp_srm(struct device *kdev)
+{
+	sysfs_remove_bin_file(&kdev->kobj, &srm_attrs);
+}
+
 void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
@@ -623,12 +653,14 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 		DRM_ERROR("RPS sysfs setup failed\n");
 
 	i915_setup_error_capture(kdev);
+	i915_setup_hdcp_srm(kdev);
 }
 
 void i915_teardown_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
 
+	i915_teardown_hdcp_srm(kdev);
 	i915_teardown_error_capture(kdev);
 
 	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
