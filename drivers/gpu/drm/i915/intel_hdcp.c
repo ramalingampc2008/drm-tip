@@ -8,6 +8,7 @@
 
 #include <drm/drm_hdcp.h>
 #include <drm/i915_component.h>
+#include <drm/drm_sysfs.h>
 #include <linux/i2c.h>
 #include <linux/random.h>
 #include <linux/component.h>
@@ -18,6 +19,14 @@
 #define KEY_LOAD_TRIES	5
 #define ENCRYPT_STATUS_CHANGE_TIMEOUT_MS	50
 #define HDCP2_LC_RETRY_CNT			3
+
+static inline
+void intel_hdcp_state_change_event(struct drm_connector *connector)
+{
+	struct drm_property *property = connector->content_protection_property;
+
+	drm_sysfs_connector_status_event(connector, property);
+}
 
 static
 bool intel_hdcp_is_ksv_valid(u8 *ksv)
@@ -943,6 +952,7 @@ static void intel_hdcp_prop_work(struct work_struct *work)
 	if (hdcp->value != DRM_MODE_CONTENT_PROTECTION_UNDESIRED) {
 		state = connector->base.state;
 		state->content_protection = hdcp->value;
+		intel_hdcp_state_change_event(&connector->base);
 	}
 
 	mutex_unlock(&hdcp->mutex);
@@ -2206,6 +2216,7 @@ int intel_hdcp_disable(struct intel_connector *connector)
 			ret = _intel_hdcp2_disable(connector);
 		else if (hdcp->hdcp_encrypted)
 			ret = _intel_hdcp_disable(connector);
+		intel_hdcp_state_change_event(&connector->base);
 	}
 
 	mutex_unlock(&hdcp->mutex);
