@@ -265,4 +265,40 @@ void drm_hdcp2_u32_to_seq_num(u8 seq_num[HDCP_2_2_SEQ_NUM_LEN], u32 val)
 	seq_num[2] = val;
 }
 
+#define DRM_HDCP_SRM_GEN1_MAX_BYTES		(5 * 1024)
+#define DRM_HDCP_1_4_SRM_ID			0x8
+#define DRM_HDCP_1_4_VRL_LENGTH_SIZE		3
+#define DRM_HDCP_1_4_DCP_SIG_SIZE		40
+
+struct hdcp_srm_header {
+	struct {
+		u8 reserved_hi:4;
+		u8 srm_id:4;
+		u8 reserved_lo;
+	} spec_indicator;
+	u16 srm_version;
+	u8 srm_gen_no;
+} __packed;
+
+#define DRM_HDCP_2_SRM_ID			0x9
+#define DRM_HDCP_2_INDICATOR			0x1
+#define DRM_HDCP_2_VRL_LENGTH_SIZE		3
+#define DRM_HDCP_2_DCP_SIG_SIZE			384
+#define DRM_HDCP_2_NO_OF_DEV_PLUS_RESERVED_SZ	4
+
+#define DRM_HDCP_2_KSV_COUNT_2_LSBITS(byte)	(((byte) & 0xC) >> 6)
+
+struct hdcp2_srm_header {
+	struct {
+		u8 hdcp2_indicator:4;
+		u8 srm_id:4;
+		u8 reserved;
+	} spec_indicator;
+	u16 srm_version;
+	u8 srm_gen_no;
+} __packed;
+
+struct drm_device;
+
+bool drm_hdcp_ksvs_revocated(struct drm_device *dev, u8 *ksvs, u32 ksv_count);
 #endif
