@@ -492,9 +492,11 @@ int intel_hdcp_validate_v_prime(struct intel_digital_port *intel_dig_port,
 
 /* Implements Part 2 of the HDCP authorization procedure */
 static
-int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
-			       const struct intel_hdcp_shim *shim)
+int intel_hdcp_auth_downstream(struct intel_connector *connector)
 {
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	const struct intel_hdcp_shim *shim = connector->hdcp.shim;
+	struct drm_device *dev = connector->base.dev;
 	u8 bstatus[2], num_downstream, *ksv_fifo;
 	int ret, i, tries = 3;
 
@@ -533,6 +535,11 @@ int intel_hdcp_auth_downstream(struct intel_digital_port *intel_dig_port,
 	if (ret)
 		goto err;
 
+	if (drm_hdcp_ksvs_revocated(dev, ksv_fifo, num_downstream)) {
+		DRM_ERROR("Revocated Ksv(s) in ksv_fifo\n");
+		return -EPERM;
+	}
+
 	/*
 	 * When V prime mismatches, DP Spec mandates re-read of
 	 * V prime atleast twice.
@@ -559,9 +566,12 @@ err:
 }
 
 /* Implements Part 1 of the HDCP authorization procedure */
-static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
-			   const struct intel_hdcp_shim *shim)
+static int intel_hdcp_auth(struct intel_connector *connector)
 {
+	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
+	struct intel_hdcp *hdcp = &connector->hdcp;
+	struct drm_device *dev = connector->base.dev;
+	const struct intel_hdcp_shim *shim = hdcp->shim;
 	struct drm_i915_private *dev_priv;
 	enum port port;
 	unsigned long r0_prime_gen_start;
@@ -626,6 +636,11 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	ret = intel_hdcp_read_valid_bksv(intel_dig_port, shim, bksv.shim);
 	if (ret < 0)
 		return ret;
+
+	if (drm_hdcp_ksvs_revocated(dev, bksv.shim, 1)) {
+		DRM_ERROR("BKSV is revocated\n");
+		return -EPERM;
+	}
 
 	I915_WRITE(PORT_HDCP_BKSVLO(port), bksv.reg[0]);
 	I915_WRITE(PORT_HDCP_BKSVHI(port), bksv.reg[1]);
@@ -700,7 +715,7 @@ static int intel_hdcp_auth(struct intel_digital_port *intel_dig_port,
 	 */
 
 	if (repeater_present)
-		return intel_hdcp_auth_downstream(intel_dig_port, shim);
+		return intel_hdcp_auth_downstream(connector);
 
 	DRM_DEBUG_KMS("HDCP is enabled (no repeater present)\n");
 	return 0;
@@ -763,7 +778,7 @@ static int _intel_hdcp_enable(struct intel_connector *connector)
 
 	/* Incase of authentication failures, HDCP spec expects reauth. */
 	for (i = 0; i < tries; i++) {
-		ret = intel_hdcp_auth(conn_to_dig_port(connector), hdcp->shim);
+		ret = intel_hdcp_auth(connector);
 		if (!ret) {
 			hdcp->hdcp_encrypted = true;
 			return 0;
@@ -777,12 +792,6 @@ static int _intel_hdcp_enable(struct intel_connector *connector)
 
 	DRM_DEBUG_KMS("HDCP authentication failed (%d tries/%d)\n", tries, ret);
 	return ret;
-}
-
-static inline
-struct intel_connector *intel_hdcp_to_connector(struct intel_hdcp *hdcp)
-{
-	return container_of(hdcp, struct intel_connector, hdcp);
 }
 
 /* Implements Part 3 of the HDCP authorization procedure */
@@ -843,6 +852,12 @@ static int intel_hdcp_check_link(struct intel_connector *connector)
 out:
 	mutex_unlock(&hdcp->mutex);
 	return ret;
+}
+
+static inline
+struct intel_connector *intel_hdcp_to_connector(struct intel_hdcp *hdcp)
+{
+	return container_of(hdcp, struct intel_connector, hdcp);
 }
 
 static void intel_hdcp_prop_work(struct work_struct *work)
@@ -1162,6 +1177,7 @@ static int hdcp2_authentication_key_exchange(struct intel_connector *connector)
 {
 	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
 	struct intel_hdcp *hdcp = &connector->hdcp;
+	struct drm_device *dev = connector->base.dev;
 	union {
 		struct hdcp2_ake_init ake_init;
 		struct hdcp2_ake_send_cert send_cert;
@@ -1195,6 +1211,12 @@ static int hdcp2_authentication_key_exchange(struct intel_connector *connector)
 		return -EINVAL;
 
 	hdcp->is_repeater = HDCP_2_2_RX_REPEATER(msgs.send_cert.rx_caps[2]);
+
+	if (drm_hdcp_ksvs_revocated(dev,
+				    msgs.send_cert.cert_rx.receiver_id, 1)) {
+		DRM_ERROR("Receiver ID is revocated\n");
+		return -EPERM;
+	}
 
 	/*
 	 * Here msgs.no_stored_km will hold msgs corresponding to the km
@@ -1348,13 +1370,14 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 {
 	struct intel_digital_port *intel_dig_port = conn_to_dig_port(connector);
 	struct intel_hdcp *hdcp = &connector->hdcp;
+	struct drm_device *dev = connector->base.dev;
 	union {
 		struct hdcp2_rep_send_receiverid_list recvid_list;
 		struct hdcp2_rep_send_ack rep_ack;
 	} msgs;
 	const struct intel_hdcp_shim *shim = hdcp->shim;
+	u32 seq_num_v, device_cnt;
 	u8 *rx_info;
-	u32 seq_num_v;
 	int ret;
 
 	ret = shim->read_2_2_msg(intel_dig_port, HDCP_2_2_REP_SEND_RECVID_LIST,
@@ -1377,6 +1400,14 @@ int hdcp2_authenticate_repeater_topology(struct intel_connector *connector)
 		/* Roll over of the seq_num_v from repeater. Reauthenticate. */
 		DRM_DEBUG_KMS("Seq_num_v roll over.\n");
 		return -EINVAL;
+	}
+
+	device_cnt = HDCP_2_2_DEV_COUNT_HI(rx_info[0]) << 4 ||
+			HDCP_2_2_DEV_COUNT_LO(rx_info[1]);
+	if (drm_hdcp_ksvs_revocated(dev, msgs.recvid_list.receiver_ids,
+				    device_cnt)) {
+		DRM_ERROR("Revoked receiver ID(s) is in list\n");
+		return -EPERM;
 	}
 
 	ret = hdcp2_verify_rep_topology_prepare_ack(connector,
