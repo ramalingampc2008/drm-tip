@@ -415,3 +415,19 @@ int drm_connector_attach_content_protection_property(
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_content_protection_property);
+
+void drm_hdcp_update_content_protection(struct drm_connector *connector,
+					u64 val)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_connector_state *state = connector->state;
+
+	WARN_ON(!drm_modeset_is_locked(&dev->mode_config.connection_mutex));
+	if (state->content_protection == val)
+		return;
+
+	state->content_protection = val;
+	drm_sysfs_connector_status_event(connector,
+				 dev->mode_config.content_protection_property);
+}
+EXPORT_SYMBOL(drm_hdcp_update_content_protection);
